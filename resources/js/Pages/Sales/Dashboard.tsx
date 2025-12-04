@@ -55,6 +55,7 @@ export default function InventoryDashboard({ auth, stats }: PageProps & Props) {
 
             <div className="py-12">
 
+
             </div>
         </AuthenticatedLayout>
     );

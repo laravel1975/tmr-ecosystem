@@ -2,8 +2,11 @@
 
 namespace TmrEcosystem\Approval\Infrastructure\Providers;
 
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
+use TmrEcosystem\Approval\Application\Listeners\ApprovalCompletedListener;
+use TmrEcosystem\Approval\Domain\Events\WorkflowCompleted;
 use TmrEcosystem\Approval\Domain\Models\ApprovalRequest;
 use TmrEcosystem\Approval\Domain\Services\ConditionChecker;
 
@@ -20,6 +23,11 @@ class ApprovalServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Event::listen(
+            WorkflowCompleted::class,
+            ApprovalCompletedListener::class
+        );
+
         // 1. Register Migrations
         $this->loadMigrationsFrom(__DIR__ . '/../Database/Migrations');
 

@@ -17,7 +17,8 @@ import {
     DropdownMenuTrigger,
 } from '@/Components/ui/dropdown-menu';
 import { Button } from '@/Components/ui/button';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, FileText } from 'lucide-react';
+import NavLink from '@/Components/NavLink';
 
 /*
 |--------------------------------------------------------------------------
@@ -62,6 +63,17 @@ export default function SalesNavigationMenu() {
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
+
+                <NavLink
+                    href={route('sales.approvals.index')}
+                    active={route().current('sales.approvals.index')}
+                >
+                    <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4" />
+                        <span>Approval Tasks</span>
+                    </div>
+                </NavLink>
+
             </NavigationMenuList>
         </NavigationMenu>
     );

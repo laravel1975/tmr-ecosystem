@@ -1,8 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 use TmrEcosystem\Sales\Presentation\Http\Controllers\OrderController;
 use TmrEcosystem\Sales\Presentation\Http\Controllers\OrderPdfController;
+use TmrEcosystem\Sales\Presentation\Http\Controllers\SalesApprovalController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,3 +22,5 @@ Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->name('or
 Route::delete('/orders/{id}', [OrderController::class, 'destroy'])->name('orders.destroy');
 
 Route::get('/orders/{id}/pdf', [OrderPdfController::class, 'download'])->name('orders.pdf');
+
+Route::get('/approvals', [SalesApprovalController::class, 'index'])->name('approvals.index');

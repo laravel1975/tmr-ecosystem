@@ -26,6 +26,7 @@ import {
     AlertDialogTitle,
 } from "@/Components/ui/alert-dialog";
 import { cn } from '@/lib/utils';
+import ApprovalsNavigationMenu from './Partials/ApprovalsNavigationMenu';
 
 // --- Interfaces ---
 interface ApprovalStep {
@@ -141,14 +142,14 @@ export default function ApprovalIndex({ auth, approvals, filters, stats }: Props
             case 'pending':
                 return (
                     <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 gap-1 font-normal">
-                        <Clock className="w-3 h-3"/>
+                        <Clock className="w-3 h-3" />
                         {currentStep ? `Wait: ${currentStep.approver_role}` : 'Pending'}
                     </Badge>
                 );
             case 'approved':
-                return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1"><CheckCircle2 className="w-3 h-3"/> Approved</Badge>;
+                return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1"><CheckCircle2 className="w-3 h-3" /> Approved</Badge>;
             case 'rejected':
-                return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><XCircle className="w-3 h-3"/> Rejected</Badge>;
+                return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><XCircle className="w-3 h-3" /> Rejected</Badge>;
             default:
                 return <Badge variant="secondary">{status}</Badge>;
         }
@@ -157,7 +158,7 @@ export default function ApprovalIndex({ auth, approvals, filters, stats }: Props
     const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() : 'NA';
 
     return (
-        <AuthenticatedLayout user={auth.user}>
+        <AuthenticatedLayout user={auth.user} navigationMenu={<ApprovalsNavigationMenu />}>
             <Head title="Approval Workflow" />
 
             <div className="py-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
@@ -299,7 +300,7 @@ export default function ApprovalIndex({ auth, approvals, filters, stats }: Props
                                                             )}
                                                         </TableCell>
                                                         <TableCell className="text-gray-500 text-xs">
-                                                            {new Date(item.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit'})}
+                                                            {new Date(item.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                         </TableCell>
                                                         <TableCell>{getStatusBadge(item.status, item.current_step)}</TableCell>
                                                         <TableCell className="text-right pr-6">
@@ -369,7 +370,7 @@ export default function ApprovalIndex({ auth, approvals, filters, stats }: Props
                     <AlertDialogContent>
                         <AlertDialogHeader>
                             <AlertDialogTitle className={`flex items-center gap-2 ${actionType === 'approve' ? 'text-green-700' : 'text-red-700'}`}>
-                                {actionType === 'approve' ? <CheckCircle2 className="w-6 h-6"/> : <XCircle className="w-6 h-6"/>}
+                                {actionType === 'approve' ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
                                 {actionType === 'approve' ? 'Confirm Approval' : 'Reject Request'}
                             </AlertDialogTitle>
                             <AlertDialogDescription>
