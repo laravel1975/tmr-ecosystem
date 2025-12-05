@@ -90,4 +90,15 @@ class User extends Authenticatable implements MustVerifyEmail
             // 3.4 คำอธิบาย Log
             ->setDescriptionForEvent(fn(string $eventName) => "User profile [{$this->email}] has been {$eventName}");
     }
+
+
+
+    /**
+     * Get the employee profile associated with the user.
+     */
+    public function employeeProfile(): HasOne
+    {
+        // Assuming 'user_id' is the foreign key in employee_profiles table
+        return $this->hasOne(EmployeeProfile::class, 'user_id');
+    }
 }

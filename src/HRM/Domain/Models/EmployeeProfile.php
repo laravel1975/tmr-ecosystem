@@ -7,6 +7,7 @@ use App\Models\Scopes\CompanyScope; // <-- ใช้ Scope ที่คุณส
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Support\Facades\Storage;
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Maintenance\Domain\Models\MaintenanceAssignment;
 
@@ -36,7 +37,8 @@ class EmployeeProfile extends Model
         'address_line_2',
         'city',
         'postal_code',
-        'country'
+        'country',
+        'signature_path',
     ];
 
     protected $casts = [
@@ -129,5 +131,13 @@ class EmployeeProfile extends Model
     public function overtimeRequests()
     {
         return $this->hasMany(OvertimeRequest::class);
+    }
+
+    // Accessor สำหรับดึง URL รูปภาพ
+    public function getSignatureUrlAttribute()
+    {
+        return $this->signature_path
+            ? Storage::url($this->signature_path)
+            : null;
     }
 }

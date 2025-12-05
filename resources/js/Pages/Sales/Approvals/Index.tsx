@@ -6,7 +6,8 @@ import {
     Search, FileText, CheckCircle2, XCircle,
     Clock, AlertCircle, Filter, DollarSign,
     UserPlus, Truck, Factory, AlertTriangle,
-    Briefcase, CalendarClock, CreditCard
+    Briefcase, CalendarClock, CreditCard,
+    Printer
 } from 'lucide-react';
 
 // UI Components (ShadCN)
@@ -194,7 +195,7 @@ export default function SalesApprovalIndex({ auth, approvals, filters, stats }: 
             return <div className="text-xs text-red-600 font-semibold">Request Discount: {payload.discount_percent}%</div>;
         }
         if (item.workflow.code === 'PROD_URGENT_ORDER') {
-            return <div className="text-xs text-red-600 font-bold flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> URGENT: {payload.reason}</div>;
+            return <div className="text-xs text-red-600 font-bold flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> URGENT: {payload.reason}</div>;
         }
         if (item.workflow.code === 'FINANCE_CREDIT_LIMIT') {
             return <div className="text-xs text-blue-600">New Limit: {Number(payload.new_credit_limit).toLocaleString()} THB</div>;
@@ -362,7 +363,7 @@ export default function SalesApprovalIndex({ auth, approvals, filters, stats }: 
                                                             <TableCell>
                                                                 {item.status === 'pending' && item.current_step ? (
                                                                     <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 gap-1.5 py-1">
-                                                                        <Clock className="w-3 h-3 animate-pulse"/>
+                                                                        <Clock className="w-3 h-3 animate-pulse" />
                                                                         Waiting: {item.current_step.approver_role}
                                                                     </Badge>
                                                                 ) : (
@@ -374,6 +375,7 @@ export default function SalesApprovalIndex({ auth, approvals, filters, stats }: 
 
                                                             {/* Actions */}
                                                             <TableCell className="text-right pr-6">
+
                                                                 {item.status === 'pending' && (
                                                                     <div className="flex justify-end gap-2">
                                                                         <Button
@@ -394,9 +396,20 @@ export default function SalesApprovalIndex({ auth, approvals, filters, stats }: 
                                                                     </div>
                                                                 )}
                                                                 {item.status !== 'pending' && (
-                                                                    <Button size="sm" variant="ghost" className="text-gray-400" disabled>
-                                                                        Archived
-                                                                    </Button>
+                                                                    <>
+                                                                        <a
+                                                                            href={route('approval.print', item.id)}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                        >
+                                                                            <Button size="sm" variant="outline" className="h-8 w-8 p-0" title="Print PDF">
+                                                                                <Printer className="w-4 h-4 text-gray-600" />
+                                                                            </Button>
+                                                                        </a>
+                                                                        <Button size="sm" variant="ghost" className="text-gray-400" disabled>
+                                                                            Archived
+                                                                        </Button>
+                                                                    </>
                                                                 )}
                                                             </TableCell>
                                                         </TableRow>
@@ -443,7 +456,7 @@ export default function SalesApprovalIndex({ auth, approvals, filters, stats }: 
                     <AlertDialogContent className="sm:max-w-[500px]">
                         <AlertDialogHeader>
                             <AlertDialogTitle className={`flex items-center gap-2 text-xl ${actionType === 'approve' ? 'text-green-700' : 'text-red-700'}`}>
-                                {actionType === 'approve' ? <CheckCircle2 className="w-6 h-6"/> : <XCircle className="w-6 h-6"/>}
+                                {actionType === 'approve' ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
                                 {actionType === 'approve' ? 'Approve Request' : 'Reject Request'}
                             </AlertDialogTitle>
                             <AlertDialogDescription className="text-gray-600 mt-2">

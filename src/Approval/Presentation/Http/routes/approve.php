@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use TmrEcosystem\Approval\Application\UseCases\SubmitRequestUseCase;
+use TmrEcosystem\Approval\Presentation\Http\Controllers\ApprovalPdfController;
 use TmrEcosystem\Approval\Presentation\Http\Controllers\ApprovalRequestController;
 
 Route::group(['middleware' => ['web', 'auth']], function () {
@@ -13,6 +14,8 @@ Route::group(['middleware' => ['web', 'auth']], function () {
     // ปุ่มกด Action (Approve/Reject)
     Route::post('/approvals/action', [ApprovalRequestController::class, 'action'])
         ->name('approval.action');
+
+    Route::get('/approval-requests/{id}/print', [ApprovalPdfController::class, 'print'])->name('approval.print');
 
     Route::get('/test-approval-submit', function (SubmitRequestUseCase $submitService) {
 
