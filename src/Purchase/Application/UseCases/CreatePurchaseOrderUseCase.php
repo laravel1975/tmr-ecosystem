@@ -8,18 +8,22 @@ use TmrEcosystem\Purchase\Application\DTOs\PurchaseOrderData;
 use TmrEcosystem\Purchase\Domain\Models\PurchaseOrder;
 use TmrEcosystem\Purchase\Domain\Models\PurchaseOrderItem;
 use TmrEcosystem\Purchase\Domain\Enums\PurchaseOrderStatus;
+use TmrEcosystem\Purchase\Domain\Events\PurchaseOrderCreated;
 
 class CreatePurchaseOrderUseCase
 {
     public function execute(PurchaseOrderData $data): PurchaseOrder
     {
         return DB::transaction(function () use ($data) {
+            // ... (Logic เดิม: คำนวณภาษี, สร้าง PO Header, สร้าง Items) ...
+            // สมมติว่าโค้ดเดิมอยู่ตรงนี้
+
             // 1. Calculate Totals
             $subtotal = 0;
             foreach ($data->items as $item) {
                 $subtotal += $item['quantity'] * $item['unit_price'];
             }
-            $taxRate = 0.07; // 7% VAT Example
+            $taxRate = 0.07;
             $taxAmount = $subtotal * $taxRate;
             $grandTotal = $subtotal + $taxAmount;
 
@@ -52,6 +56,9 @@ class CreatePurchaseOrderUseCase
                     'total_price' => $itemData['quantity'] * $itemData['unit_price'],
                 ]);
             }
+
+            // --- [เพิ่มใหม่] Dispatch Event ---
+            event(new PurchaseOrderCreated($po));
 
             return $po;
         });

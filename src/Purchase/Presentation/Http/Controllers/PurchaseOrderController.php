@@ -39,33 +39,50 @@ class PurchaseOrderController extends Controller
     }
 
     public function index(Request $request)
-{
-    $query = PurchaseOrder::with(['vendor'])
-        ->withCount('items');
+    {
+        $query = PurchaseOrder::with(['vendor'])
+            ->withCount('items');
 
-    // Filter Logic
-    if ($request->has('search')) {
-        $search = $request->input('search');
-        $query->where(function($q) use ($search) {
-            $q->where('document_number', 'like', "%{$search}%")
-              ->orWhereHas('vendor', function($q) use ($search) {
-                  $q->where('name', 'like', "%{$search}%");
-              });
-        });
+        // Filter Logic
+        if ($request->has('search')) {
+            $search = $request->input('search');
+            $query->where(function ($q) use ($search) {
+                $q->where('document_number', 'like', "%{$search}%")
+                    ->orWhereHas('vendor', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Sort Logic (Basic)
+        if ($request->has('sort')) {
+            $sort = $request->input('sort');
+            $direction = $request->input('direction', 'asc');
+            $query->orderBy($sort, $direction);
+        } else {
+            $query->latest();
+        }
+
+        return Inertia::render('Purchase/Orders/Index', [
+            'orders' => $query->paginate(10)->withQueryString(),
+            'filters' => $request->all(['search', 'sort', 'direction']),
+        ]);
     }
 
-    // Sort Logic (Basic)
-    if ($request->has('sort')) {
-        $sort = $request->input('sort');
-        $direction = $request->input('direction', 'asc');
-        $query->orderBy($sort, $direction);
-    } else {
-        $query->latest();
-    }
+    /**
+     * Display the specified resource.
+     */
+    public function show(\TmrEcosystem\Purchase\Domain\Models\PurchaseOrder $order)
+    {
+        // โหลดข้อมูลความสัมพันธ์ที่ต้องใช้ในหน้า Show
+        // items.item = โหลดรายการสินค้า และข้อมูลสินค้า (ชื่อ, part_number)
+        // vendor = ข้อมูลผู้ขาย
+        // creator = ผู้สร้างเอกสาร
+        $order->load(['vendor', 'items.item', 'creator']);
 
-    return Inertia::render('Purchase/Orders/Index', [
-        'orders' => $query->paginate(10)->withQueryString(),
-        'filters' => $request->all(['search', 'sort', 'direction']),
-    ]);
-}
+        // ส่งข้อมูลไปยังหน้า Show.tsx
+        return Inertia::render('Purchase/Orders/Show', [
+            'order' => $order,
+        ]);
+    }
 }
