@@ -13,4 +13,5 @@ return [
     TmrEcosystem\Logistics\Infrastructure\Providers\LogisticsServiceProvider::class,
     TmrEcosystem\Shared\Infrastructure\Providers\SharedServiceProvider::class,
     TmrEcosystem\Approval\Infrastructure\Providers\ApprovalServiceProvider::class,
+    TmrEcosystem\Purchase\Infrastructure\Providers\PurchaseServiceProvider::class,
 ];

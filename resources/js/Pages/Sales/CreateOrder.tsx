@@ -364,8 +364,16 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     </TableCell>
                                                     <TableCell className="p-2 relative w-[350px]">
                                                         {/* Disable เปลี่ยนสินค้าถ้าส่งไปแล้ว */}
-                                                        <ProductCombobox products={availableProducts} value={item.product_id} onChange={(val) => updateItem(index, 'product_id', val)} disabled={(isConfirmed && !!item.id) || isItemShipped} placeholder="Select Product" />
-                                                        {(isConfirmed && item.id) || isItemShipped && <Lock className="w-3 h-3 text-gray-400 absolute right-2 top-4" />}
+                                                        <ProductCombobox
+                                                            products={availableProducts}
+                                                            value={item.product_id}
+                                                            onChange={(val) => updateItem(index, 'product_id', val)}
+                                                            disabled={(isConfirmed && !!item.id) || isItemShipped}
+                                                            placeholder="Select Product"
+                                                        />
+
+                                        {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
+
                                                     </TableCell>
                                                     <TableCell className="p-2"><Input disabled={isCancelled || isItemShipped} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelled && "line-through")} /></TableCell>
                                                     <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelled && "bg-yellow-50/50")} disabled={isItemShipped} /></TableCell>

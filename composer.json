@@ -55,6 +55,7 @@
             "TmrEcosystem\\Logistics\\": "src/Logistics/",
             "TmrEcosystem\\Communication\\": "src/Communication/",
             "TmrEcosystem\\Shared\\": "src/Shared/",
+            "TmrEcosystem\\Purchase\\": "src/Purchase/",
             "TmrEcosystem\\Approval\\": "src/Approval/"
         }
     },
