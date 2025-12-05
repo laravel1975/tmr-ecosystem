@@ -72,7 +72,7 @@ const allApps: AppItemProps[] = [
 
     // --- Group 4: Supply Chain (ซื้อ -> ผลิต -> ขาย) ---
     {
-        href: "#", // (Purchase)
+        href: route('purchase.orders.index'), // (Purchase)
         label: 'Purchase',
         Icon: ShoppingCart,
         colorClasses: 'bg-cyan-600 text-white',
