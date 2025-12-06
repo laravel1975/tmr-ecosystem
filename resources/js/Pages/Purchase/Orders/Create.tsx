@@ -26,6 +26,7 @@ import { Trash2, Plus } from 'lucide-react';
 import { Vendor, Product, PurchaseOrderForm } from '@/types/purchase';
 import { format } from 'date-fns';
 import ProductCombobox from '@/Components/ProductCombobox';
+import PurchaseNavigationMenu from '../Partials/PurchaseNavigationMenu';
 
 interface Props {
     auth: any;
@@ -82,6 +83,7 @@ export default function Create({ auth, vendors, products }: Props) {
         <AuthenticatedLayout
             user={auth.user}
             header={<h2 className="font-semibold text-xl text-gray-800 leading-tight">Create Purchase Order</h2>}
+            navigationMenu={<PurchaseNavigationMenu />}
         >
             <Head title="Create Purchase Order" />
 

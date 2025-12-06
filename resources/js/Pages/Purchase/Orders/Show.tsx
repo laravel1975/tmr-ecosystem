@@ -14,6 +14,7 @@ import {
 } from '@/Components/ui/table';
 import { Printer, CheckCircle, ArrowLeft, PackageCheck } from 'lucide-react';
 import { format } from 'date-fns';
+import PurchaseNavigationMenu from '../Partials/PurchaseNavigationMenu';
 
 // Define Types (ควรอยู่ใน resources/js/types/purchase.d.ts แต่เขียนที่นี่เพื่อความครบถ้วน)
 interface PurchaseOrder {
@@ -101,6 +102,7 @@ export default function Show({ auth, order }: Props) {
                     </div>
                 </div>
             }
+            navigationMenu={<PurchaseNavigationMenu/>}
         >
             <Head title={`PO ${order.document_number}`} />
 

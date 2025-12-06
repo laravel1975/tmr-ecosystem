@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
 import { Textarea } from '@/Components/ui/textarea';
 import InputError from '@/Components/InputError';
 import { ArrowLeft } from 'lucide-react';
+import PurchaseNavigationMenu from '../Partials/PurchaseNavigationMenu';
 
 export default function Create({ auth }: { auth: any }) {
     const { data, setData, post, processing, errors } = useForm({
@@ -27,7 +28,7 @@ export default function Create({ auth }: { auth: any }) {
     };
 
     return (
-        <AuthenticatedLayout user={auth.user}>
+        <AuthenticatedLayout user={auth.user} navigationMenu={<PurchaseNavigationMenu />}>
             <Head title="Create Vendor" />
             <div className="py-8 max-w-2xl mx-auto sm:px-6 lg:px-8">
                 <Link href={route('purchase.vendors.index')} className="flex items-center text-gray-500 mb-4 hover:text-gray-700">
