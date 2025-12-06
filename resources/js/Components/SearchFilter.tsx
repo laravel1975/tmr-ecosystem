@@ -1,30 +1,45 @@
+import React from 'react';
 import { Input } from '@/Components/ui/input';
+import { Search, X } from 'lucide-react';
+import { Button } from '@/Components/ui/button';
 
-// 1. กำหนด Props ที่ Component นี้ต้องการ
-type SearchFilterProps = {
-    value: string;
-    // (เราใช้ (value: string) => void แทน (e) => ... เพื่อความยืดหยุ่น)
+interface SearchFilterProps {
+    value?: string;
     onChange: (value: string) => void;
     placeholder?: string;
     className?: string;
-};
+}
 
-/**
- * Reusable Input component for text-based filtering.
- */
 export default function SearchFilter({
-    value,
+    value = '',
     onChange,
-    placeholder,
-    className
+    placeholder = 'Search...',
+    className = '',
 }: SearchFilterProps) {
     return (
-        <Input
-            placeholder={placeholder}
-            value={value}
-            // 2. แปลง (e) => ... ให้อยู่ใน Component นี้
-            onChange={(e) => onChange(e.target.value)}
-            className={className}
-        />
+        <div className={`relative flex items-center ${className}`}>
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+
+            <Input
+                type="text"
+                placeholder={placeholder}
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="pl-9 pr-8 w-full" // เพิ่ม pr-8 เพื่อเว้นที่ให้ปุ่ม X
+            />
+
+            {/* ปุ่ม Clear: แสดงเฉพาะเมื่อ value ไม่ว่าง */}
+            {value && (
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1 h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => onChange('')} // กดแล้วส่งค่าว่างกลับไป
+                >
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">Clear search</span>
+                </Button>
+            )}
+        </div>
     );
 }
