@@ -78,7 +78,7 @@ const allApps: AppItemProps[] = [
         colorClasses: 'bg-cyan-600 text-white',
     },
     {
-        href: "#", // (Manufacturing)
+        href: route('manufacturing.dashboard.index'), // (Manufacturing)
         label: 'Manufacturing',
         Icon: Factory,
         colorClasses: 'bg-amber-500 text-white',

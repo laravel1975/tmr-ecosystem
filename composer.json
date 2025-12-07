@@ -44,19 +44,7 @@
             "App\\": "app/",
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/",
-            "TmrEcosystem\\IAM\\": "src/IAM/",
-            "TmrEcosystem\\HRM\\": "src/HRM/",
-            "TmrEcosystem\\Maintenance\\": "src/Maintenance/",
-            "TmrEcosystem\\Inventory\\": "src/Inventory/",
-            "TmrEcosystem\\Warehouse\\": "src/Warehouse/",
-            "TmrEcosystem\\Stock\\": "src/Stock/",
-            "TmrEcosystem\\Sales\\": "src/Sales/",
-            "TmrEcosystem\\Customers\\": "src/Customers/",
-            "TmrEcosystem\\Logistics\\": "src/Logistics/",
-            "TmrEcosystem\\Communication\\": "src/Communication/",
-            "TmrEcosystem\\Shared\\": "src/Shared/",
-            "TmrEcosystem\\Purchase\\": "src/Purchase/",
-            "TmrEcosystem\\Approval\\": "src/Approval/"
+            "TmrEcosystem\\": "src/"
         }
     },
     "autoload-dev": {
