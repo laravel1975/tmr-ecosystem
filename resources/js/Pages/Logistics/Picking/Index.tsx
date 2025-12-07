@@ -4,7 +4,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { debounce } from 'lodash';
 import {
     Search, Box, ArrowRight, Eye, UserPlus, UserCheck,
-    RefreshCw, CheckCircle2, Clock, User
+    RefreshCw, CheckCircle2, Clock, User, FileText // เพิ่ม FileText
 } from "lucide-react";
 
 // Components
@@ -34,10 +34,13 @@ interface PickingSlip {
     order_number: string;
     customer_name: string;
     items_count: number;
-    status: string;
+    status: string; // pending, assigned, done
     created_at: string;
     picker_name?: string | null;
     picker_user_id?: number | null;
+    // --- เพิ่มฟิลด์สำหรับเช็ค Logic ใบเสร็จ (ต้องตรงกับ Backend Resource) ---
+    payment_status?: string; // เช่น 'paid', 'pending', 'unpaid'
+    receipt_path?: string | null; // หรือ receipt_url
 }
 
 interface Props {
@@ -63,7 +66,6 @@ interface Props {
 
 export default function PickingIndex({ auth, pickingSlips, filters, stats }: Props) {
     const [search, setSearch] = useState(filters.search || '');
-    // ✅ ใช้ 'all' เป็น default ถ้า filters.status ไม่มีค่า
     const [currentStatus, setCurrentStatus] = useState(filters.status || 'all');
     const [claimingSlip, setClaimingSlip] = useState<PickingSlip | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -76,7 +78,6 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                 route('logistics.picking.index'),
                 {
                     search: query,
-                    // ✅ ส่ง undefined แทน string ว่าง ถ้าเป็น all
                     status: status === 'all' ? undefined : status
                 },
                 { preserveState: true, replace: true, onStart: () => setIsLoading(true), onFinish: () => setIsLoading(false) }
@@ -95,7 +96,6 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
             route('logistics.picking.index'),
             {
                 search,
-                // ✅ ส่ง undefined แทน string ว่าง ถ้าเป็น all
                 status: val === 'all' ? undefined : val
             },
             { preserveState: true, replace: true, onStart: () => setIsLoading(true), onFinish: () => setIsLoading(false) }
@@ -118,10 +118,21 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
         });
     };
 
-    // --- Helpers ---
+    // --- Helpers (Logic Badge อยู่ที่นี่) ---
 
-    const getStatusBadge = (status: string) => {
-        switch (status) {
+    const getStatusBadge = (slip: PickingSlip) => {
+        // 1. Logic พิเศษ: จ่ายเงินแล้ว แต่ยังไม่มีใบเสร็จ (Waiting Receipt)
+        // ตรวจสอบว่า payment_status เป็น 'paid' และ receipt_path เป็น null/ว่าง
+        if (slip.payment_status === 'paid' && !slip.receipt_path) {
+            return (
+                <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 gap-1">
+                    <FileText className="w-3 h-3" /> Waiting Receipt
+                </Badge>
+            );
+        }
+
+        // 2. Logic สถานะปกติ (Pending, Assigned, Done)
+        switch (slip.status) {
             case 'pending':
                 return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 gap-1"><Clock className="w-3 h-3"/> Pending</Badge>;
             case 'assigned':
@@ -129,7 +140,7 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
             case 'done':
                 return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1"><CheckCircle2 className="w-3 h-3"/> Done</Badge>;
             default:
-                return <Badge variant="secondary">{status}</Badge>;
+                return <Badge variant="secondary">{slip.status}</Badge>;
         }
     };
 
@@ -268,7 +279,8 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                                                         <TableCell className="text-gray-500 text-xs">
                                                             {new Date(slip.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit'})}
                                                         </TableCell>
-                                                        <TableCell>{getStatusBadge(slip.status)}</TableCell>
+                                                        {/* เรียกใช้ Function Badge โดยส่งทั้ง Object */}
+                                                        <TableCell>{getStatusBadge(slip)}</TableCell>
                                                         <TableCell className="text-right pr-6">
                                                             {slip.status === 'pending' && (
                                                                 <Button
