@@ -26,7 +26,7 @@ class BomController extends Controller
         $companyId = $request->user()->company_id;
         $search = $request->input('search');
 
-        $boms = BillOfMaterial::with(['item', 'item.uom']) // Eager Load
+        $boms = BillOfMaterial::with(['item', 'item.uom'])
             ->where('company_id', $companyId)
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -46,36 +46,66 @@ class BomController extends Controller
     }
 
     /**
-     * แสดงหน้าจอสร้าง BOM
+     * แสดงหน้าจอสร้าง BOM พร้อมข้อมูล Master Data ที่จำเป็น
      */
     public function create(Request $request): Response
     {
-        // ดึงสินค้าเฉพาะบริษัทที่ Login อยู่
         $companyId = $request->user()->company_id;
 
-        $products = DB::table('inventory_items')
-            ->where('company_id', $companyId)
-            ->whereNull('deleted_at')
-            ->select('uuid as id', 'name', 'part_number', 'sale_price as price', 'cost_price')
-            // ปรับ select ให้ตรงกับ Interface Product ใน React
-            ->orderBy('name')
+        // ✅ Fix: Base Query พร้อม Join UOM
+        $baseItemQuery = DB::table('inventory_items')
+            ->leftJoin('inventory_uoms', 'inventory_items.uom_id', '=', 'inventory_uoms.id')
+            ->where('inventory_items.company_id', $companyId)
+            ->whereNull('inventory_items.deleted_at')
+            ->orderBy('inventory_items.name');
+
+        // Helper Map Function
+        $mapItem = fn($item) => [
+            'id' => $item->uuid,
+            'name' => "{$item->part_number} - {$item->name}",
+            'price' => (float)($item->target_price ?? 0), // ใช้ตัวแปรชั่วคราวรับค่า
+            'uom' => $item->uom_symbol ?? '', // ✅ ใช้ Alias จากการ Join
+        ];
+
+        // 1. Finished Goods: สินค้าที่ผลิตได้
+        $finishedGoods = (clone $baseItemQuery)
+            // เช็คว่ามี column is_manufactured หรือไม่ (ถ้ายังไม่ได้ Migrate ให้ลบบรรทัดนี้ก่อน)
+            ->where('inventory_items.is_manufactured', true)
+            ->select(
+                'inventory_items.uuid',
+                'inventory_items.part_number',
+                'inventory_items.name',
+                'inventory_items.sale_price as target_price', // Finished Good ใช้ราคาขายแสดง
+                'inventory_uoms.symbol as uom_symbol' // ✅ ดึง Symbol มาเป็น alias
+            )
             ->get()
-            ->map(function ($item) {
-                return [
-                    'id' => $item->id,
-                    'name' => "{$item->part_number} - {$item->name}", // แสดงรหัสคู่ชื่อ
-                    'price' => $item->price ?? 0,
-                    // 'stock' => ... ถ้าต้องการโชว์สต็อก
-                ];
-            });
+            ->map($mapItem);
+
+        // 2. Raw Materials: วัตถุดิบ
+        $rawMaterials = (clone $baseItemQuery)
+            ->where('inventory_items.is_component', true)
+            ->select(
+                'inventory_items.uuid',
+                'inventory_items.part_number',
+                'inventory_items.name',
+                'inventory_items.cost_price as target_price', // Raw Mat ใช้ราคาทุนแสดง
+                'inventory_uoms.symbol as uom_symbol'
+            )
+            ->get()
+            ->map($mapItem);
+
+        // 3. By Products: ผลพลอยได้ (ใช้ Logic เดียวกับ Raw Materials หรือ Finished Goods ก็ได้)
+        $byProducts = $rawMaterials;
 
         return Inertia::render('Manufacturing/BOM/Create', [
-            'products' => $products
+            'finishedGoods' => $finishedGoods,
+            'rawMaterials' => $rawMaterials,
+            'byProducts' => $byProducts,
         ]);
     }
 
     /**
-     * Store a newly created BOM in storage.
+     * บันทึก BOM ลงฐานข้อมูล
      */
     public function store(
         StoreBomRequest $request,
@@ -84,18 +114,19 @@ class BomController extends Controller
         try {
             $user = Auth::user();
 
-            // เรียก UseCase
+            // ✅ ส่ง Data ที่ Validate แล้วไปยัง UseCase
+            // UseCase จะต้องรองรับ 'type' และ 'byproducts' (ต้องไปแก้ UseCase เพิ่มเติมตามแผน)
             $bom = $useCase->execute(
                 $request->validated(),
                 (string) $user->company_id,
                 (string) $user->id
             );
 
-            return redirect()->route('manufacturing.dashboard')
+            return redirect()->route('manufacturing.boms.index')
                 ->with('success', "BOM '{$bom->code}' created successfully.");
         } catch (\Exception $e) {
             Log::error('Failed to create BOM: ' . $e->getMessage());
-            return back()->withInput()->with('error', 'Failed to create BOM. Please try again.');
+            return back()->withInput()->with('error', 'Failed to create BOM: ' . $e->getMessage());
         }
     }
 }

@@ -36,4 +36,10 @@ class BillOfMaterial extends Model
     {
         return $this->hasMany(BillOfMaterialComponent::class, 'bom_uuid', 'uuid');
     }
+
+    // ✅ เพิ่ม Relation By-products
+    public function byproducts(): HasMany
+    {
+        return $this->hasMany(BillOfMaterialByproduct::class, 'bom_uuid', 'uuid');
+    }
 }

@@ -7,8 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use src\Shared\Domain\Models\Company;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Database\Factories\ItemFactory;
+use TmrEcosystem\Shared\Domain\Models\Company;
 use TmrEcosystem\Shared\Infrastructure\Persistence\Casts\MoneyCast;
 use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
@@ -28,13 +28,15 @@ class ItemModel extends Model
         'part_number',
         'name',
         'description',
-        'category_id', // New FK
+        'category_id',
         'average_cost',
-        'uom_id',      // New FK
-        'cost_price',   // ✅ เพิ่ม (ใช้ MoneyCast)
-        'sale_price',   // ✅ เพิ่ม (ใช้ MoneyCast)
+        'uom_id',
+        'cost_price',
+        'sale_price',
         'image_path',
-        'tracking_strategy'
+        'tracking_strategy',
+        'is_component',
+        'is_manufactured',
     ];
 
     protected function casts(): array
@@ -46,6 +48,8 @@ class ItemModel extends Model
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
+            'is_component' => 'boolean',
+            'is_manufactured' => 'boolean',
         ];
     }
 

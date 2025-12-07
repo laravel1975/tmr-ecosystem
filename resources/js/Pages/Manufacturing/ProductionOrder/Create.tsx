@@ -117,7 +117,7 @@ export default function CreateProductionOrder({ auth, products }: Props) {
 
                     {/* Actions */}
                     <div className="flex items-center justify-end gap-4 mt-6">
-                        <Link href={route('manufacturing.dashboard')}>
+                        <Link href={route('manufacturing.dashboard.index')}>
                             <SecondaryButton disabled={processing}>ยกเลิก</SecondaryButton>
                         </Link>
                         <PrimaryButton disabled={processing} className="min-w-[140px] justify-center">
