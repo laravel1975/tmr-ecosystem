@@ -3,8 +3,8 @@
 namespace Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
-use App\Models\Company; // <-- (Import Model ของคุณ)
 use Illuminate\Support\Str; // <-- (สำคัญ) Import Str เหมือนใน Seeder
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 /**
  * @extends \Illuminate\Database\Eloquent\Factories\Factory<\App\Models\Company>

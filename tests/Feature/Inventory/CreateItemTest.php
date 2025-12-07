@@ -9,8 +9,7 @@ use TmrEcosystem\Inventory\Application\DTOs\ItemData;
 use TmrEcosystem\Inventory\Application\UseCases\ManageItems\CreateItemUseCase;
 use TmrEcosystem\Inventory\Domain\Exceptions\PartNumberAlreadyExistsException;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
-use App\Models\User;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class CreateItemTest extends TestCase
 {

@@ -4,7 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use TmrEcosystem\Maintenance\Domain\Models\ActivityType;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class ActivityTypeSeeder extends Seeder
 {

@@ -4,6 +4,7 @@ namespace TmrEcosystem\Stock\Application\Listeners;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Exception;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
@@ -11,6 +12,7 @@ use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Stock\Domain\Aggregates\StockLevel;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
+use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 
 class ReserveStockOnOrderConfirmed
 {
@@ -37,7 +39,6 @@ class ReserveStockOnOrderConfirmed
                 ->where('code', 'GENERAL')
                 ->value('uuid');
 
-            // ⚠️ ถ้าไม่มี GENERAL ให้สร้างเดี๋ยวนั้นเลย (Fail-safe)
             if (!$generalLocationUuid) {
                 $generalLocationUuid = \Illuminate\Support\Str::uuid()->toString();
                 DB::table('warehouse_storage_locations')->insert([
@@ -50,32 +51,32 @@ class ReserveStockOnOrderConfirmed
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
-                Log::warning("Stock: Auto-created GENERAL location for Warehouse {$warehouseUuid}");
             }
 
+            $hasBackorder = false;
+
             foreach ($items as $item) {
-                $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->productId);
+                $productId = $item->productId;
+                $qtyNeeded = (float) $item->quantity;
+
+                $inventoryItemDto = $this->itemLookupService->findByPartNumber($productId);
                 if (!$inventoryItemDto) continue;
 
-                // 2. คำนวณแผนการจอง
                 $plan = $this->pickingService->calculatePickingPlan(
                     $inventoryItemDto->uuid,
                     $warehouseUuid,
-                    (float) $item->quantity
+                    $qtyNeeded
                 );
 
-                // 3. วนลูปจอง
                 foreach ($plan as $step) {
                     $locationUuid = $step['location_uuid'];
                     $qtyToReserve = $step['quantity'];
 
-                    // ✅ FIX: บังคับเปลี่ยน NULL เป็น GENERAL ทันที
                     if (is_null($locationUuid)) {
                         $locationUuid = $generalLocationUuid;
-                        Log::info("Stock: Backorder fallback to GENERAL for {$item->productId}");
+                        Log::info("Stock: Backorder fallback to GENERAL for {$productId}");
                     }
 
-                    // 4. ค้นหา Stock Level (ตอนนี้ $locationUuid ไม่มีทางเป็น NULL แล้ว)
                     $stockLevel = $this->stockRepo->findByLocation(
                         $inventoryItemDto->uuid,
                         $locationUuid,
@@ -97,8 +98,26 @@ class ReserveStockOnOrderConfirmed
                         $stockLevel->reserveSoft($qtyToReserve);
                         $this->stockRepo->save($stockLevel, []);
                         Log::info("Stock: Reserved {$qtyToReserve} at location {$locationUuid}");
+
                     } catch (InsufficientStockException $e) {
-                        Log::error("Stock Reserve Failed: " . $e->getMessage());
+                        Log::warning("Stock: Insufficient stock for Order {$order->getOrderNumber()} Item {$productId}. Marking as BACKORDER.");
+                        $hasBackorder = true;
+                    }
+                }
+            }
+
+            // 6. อัปเดตสถานะที่ SalesOrderModel (Database)
+            // ✅ FIX: เปลี่ยนจาก where('uuid', ...) เป็น where('id', ...)
+            $orderModel = SalesOrderModel::where('id', $order->getId())->first();
+
+            if ($orderModel) {
+                if ($hasBackorder) {
+                    if (Schema::hasColumn('sales_orders', 'stock_status')) {
+                        $orderModel->update(['stock_status' => 'backorder']);
+                    }
+                } else {
+                    if (Schema::hasColumn('sales_orders', 'stock_status')) {
+                        $orderModel->update(['stock_status' => 'reserved']);
                     }
                 }
             }

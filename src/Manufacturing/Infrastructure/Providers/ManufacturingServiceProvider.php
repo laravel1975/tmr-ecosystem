@@ -2,8 +2,11 @@
 
 namespace TmrEcosystem\Manufacturing\Infrastructure\Providers;
 
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
+use TmrEcosystem\Manufacturing\Application\Listeners\CreateProductionOrderFromSales;
+use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 
 class ManufacturingServiceProvider extends ServiceProvider
 {
@@ -11,6 +14,11 @@ class ManufacturingServiceProvider extends ServiceProvider
     {
         $this->registerRoutes();
         $this->registerMigrations();
+
+        Event::listen(
+            OrderConfirmed::class,
+            CreateProductionOrderFromSales::class
+        );
     }
 
     public function register(): void

@@ -8,9 +8,9 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 // --- (จบส่วนที่แก้ไข) ---
 
 use Tests\TestCase;
-use App\Models\Company; // (อิงจาก Asset.php และ User.php)
 use TmrEcosystem\IAM\Domain\Models\User; // (อิงจาก IAM Context)
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\Item as ItemModel;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 /**
  * นี่คือ Feature Test สำหรับ "Create Item"

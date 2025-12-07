@@ -3,7 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-use App\Models\Company; // (Import Company Model สำหรับ Foreign Key)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 return new class extends Migration
 {

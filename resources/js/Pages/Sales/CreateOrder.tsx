@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/Components/ui/select";
 import { Card, CardContent } from "@/Components/ui/card";
 import { Textarea } from "@/Components/ui/textarea";
-import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer } from "lucide-react";
+import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer, PackageX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/Components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/Components/ui/popover";
@@ -55,7 +55,6 @@ interface Props {
         note: string;
         payment_terms: string;
         total_amount: number;
-        // ✅ New Props from Backend
         is_fully_shipped?: boolean;
         has_shipped_items?: boolean;
         shipping_progress?: number;
@@ -121,7 +120,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
         const item = data.items[index];
         const newItems = [...data.items];
 
-        // ถ้ามีการส่งของไปแล้ว ห้ามลบรายการที่มีการส่งแล้ว
         if (item.qty_shipped && item.qty_shipped > 0) {
             alert('ไม่สามารถลบรายการที่จัดส่งไปแล้วได้');
             return;
@@ -153,7 +151,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
         if (isConfirmed && row.quantity === 0 && field !== 'quantity') return;
         if (isConfirmed && row.id && field === 'product_id') return;
 
-        // ❌ ห้ามแก้ยอดให้น้อยกว่าที่ส่งไปแล้ว
         if (field === 'quantity' && value < (row.qty_shipped || 0)) {
             alert(`จำนวนสินค้าต้องไม่น้อยกว่าที่จัดส่งไปแล้ว (${row.qty_shipped})`);
             return;
@@ -206,13 +203,9 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                 <Breadcrumbs links={[{ label: 'Sales Orders', href: route('sales.index') }]} activeLabel={order ? order.order_number : 'New Quotation'} />
             </div>
 
-            {/* --- Top Action Bar --- */}
             <div className="max-w-7xl mx-auto bg-white border-b px-6 py-3 flex justify-between items-center sticky top-0 z-10 shadow-sm">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center">
-                        {/* ✅ ปุ่ม Download PDF */}
-                        {/* ✅ FIX: เพิ่มเงื่อนไข {order && (...)} ครอบปุ่ม PDF ไว้ */}
-                        {/* แสดงเฉพาะเมื่อมี Order แล้วเท่านั้น */}
                         {order && (
                             <a href={route('sales.orders.pdf', order.id)} target="_blank" className="mr-1">
                                 <Button variant="outline" className="gap-2">
@@ -228,7 +221,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                         <TooltipProvider>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    {/* ✅ Disable ปุ่ม Update ถ้ามีของส่งออกไปแล้ว */}
                                                     <div>
                                                         <Button
                                                             variant="outline"
@@ -256,7 +248,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             <TooltipProvider>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
-                                        {/* ✅ Disable ปุ่ม Cancel ถ้ามีของส่งออกไปแล้ว */}
                                         <div>
                                             <Button
                                                 variant="outline"
@@ -310,7 +301,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             </div>
                         </div>
 
-                        {/* Customer & Dates */}
                         <div className="bg-white p-6 rounded-lg border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 relative">
                             {isHeaderReadOnly && <div className="absolute inset-0 bg-gray-50/30 pointer-events-none z-10" />}
                             <div className="space-y-4">
@@ -331,7 +321,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             </div>
                         </div>
 
-                        {/* Order Lines */}
                         <div className="bg-white rounded-lg border shadow-sm overflow-hidden min-h-[400px] flex flex-col">
                             <div className="flex border-b bg-gray-50"><button className="px-6 py-3 text-sm font-medium border-b-2 border-purple-700 text-purple-700 bg-white">Order Lines</button></div>
                             <div className="p-0 flex-1">
@@ -353,6 +342,11 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                             const isCancelled = isConfirmed && item.id && item.quantity === 0;
                                             const isItemShipped = (item.qty_shipped || 0) > 0;
 
+                                            // ✅ Stock Availability Check
+                                            const productInfo = availableProducts.find(p => p.id === item.product_id);
+                                            const isOutOfStock = productInfo ? (item.quantity > productInfo.stock) : false;
+                                            const stockShortage = isOutOfStock ? item.quantity - (productInfo?.stock || 0) : 0;
+
                                             return (
                                                 <TableRow key={index} className={cn("group align-top", isCancelled && "bg-gray-50 opacity-60")}>
                                                     <TableCell className="p-2 text-center align-top">
@@ -363,7 +357,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                         )}
                                                     </TableCell>
                                                     <TableCell className="p-2 relative w-[350px]">
-                                                        {/* Disable เปลี่ยนสินค้าถ้าส่งไปแล้ว */}
                                                         <ProductCombobox
                                                             products={availableProducts}
                                                             value={item.product_id}
@@ -371,9 +364,28 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                             disabled={(isConfirmed && !!item.id) || isItemShipped}
                                                             placeholder="Select Product"
                                                         />
+                                                        {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
 
-                                        {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
-
+                                                        {/* ✅ Display Stock Info & Warning */}
+                                                        {productInfo && (
+                                                            <div className="mt-2 space-y-1">
+                                                                <div className="flex justify-between text-xs">
+                                                                    <span className="text-gray-500">Stock Available:</span>
+                                                                    <span className={cn("font-medium", productInfo.stock < item.quantity ? "text-red-600" : "text-green-600")}>
+                                                                        {productInfo.stock} units
+                                                                    </span>
+                                                                </div>
+                                                                {isOutOfStock && (
+                                                                    <div className="flex items-start gap-2 p-2 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-xs">
+                                                                        <PackageX className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                                                                        <div>
+                                                                            <p className="font-semibold">Insufficient Stock!</p>
+                                                                            <p>Missing {stockShortage} units. Order will be set to <span className="font-bold underline">Backorder</span> status.</p>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="p-2"><Input disabled={isCancelled || isItemShipped} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelled && "line-through")} /></TableCell>
                                                     <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelled && "bg-yellow-50/50")} disabled={isItemShipped} /></TableCell>
@@ -384,7 +396,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                         {isCancelled ? (
                                                             <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>
                                                         ) : (
-                                                            // ✅ ซ่อนปุ่มลบ ถ้าส่งของไปแล้ว
                                                             !isItemShipped && (
                                                                 (!isConfirmed || !item.id) ? (
                                                                     <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
@@ -399,7 +410,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                         })}
                                         <TableRow>
                                             <TableCell colSpan={8} className="p-2">
-                                                {/* ✅ ซ่อนปุ่ม Add ถ้าส่งของครบแล้ว */}
                                                 {!isFullyShipped && (
                                                     <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}><Plus className="h-4 w-4 mr-2" /> Add a product</Button>
                                                 )}

@@ -5,7 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 return new class extends Migration
 {

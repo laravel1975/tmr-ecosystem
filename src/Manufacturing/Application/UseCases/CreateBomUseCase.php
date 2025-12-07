@@ -12,18 +12,16 @@ class CreateBomUseCase
     {
         return DB::transaction(function () use ($data, $companyId, $userId) {
 
-            // 1. 🔍 ตรวจสอบเวอร์ชันล่าสุด (Auto-Versioning Logic)
-            // หา BOM ของสินค้านี้ที่มีอยู่แล้วในบริษัท
+            // 1. 🔍 ตรวจสอบเวอร์ชันล่าสุด (Auto-Versioning Logic) แก้บั๊ก Duplicate Entry
             $existingBoms = BillOfMaterial::where('company_id', $companyId)
                 ->where('item_uuid', $data['item_uuid'])
                 ->get();
 
-            // ถ้ามีแล้ว ให้หาค่ามากสุดแล้วบวก 1.0 (เช่น 1.0 -> 2.0)
-            // ถ้ายังไม่มี ให้เริ่มที่ 1.0
+            // หา Version สูงสุดแล้วบวกเพิ่ม (เช่น 1.0 -> 2.0)
             $maxVersion = $existingBoms->max(fn($b) => (float)$b->version);
             $nextVersion = $maxVersion ? number_format($maxVersion + 1.0, 1) : '1.0';
 
-            // จัดการ Default: ถ้ายังไม่เคยมี BOM ให้ตัวนี้เป็น Default, ถ้ามีแล้ว ให้เป็น false
+            // ถ้าเป็น BOM แรกของสินค้านี้ ให้เป็น Default อัตโนมัติ
             $isDefault = $existingBoms->where('is_default', true)->isEmpty();
 
             // 2. 📝 Create Header (บันทึกข้อมูลหลัก)
@@ -35,13 +33,12 @@ class CreateBomUseCase
                 'item_uuid' => $data['item_uuid'],
                 'type' => $data['type'] ?? 'manufacture', // ✅ รองรับ Req 2: Type
                 'output_quantity' => $data['output_quantity'],
-                'version' => $nextVersion, // ✅ Fix: ใช้เวอร์ชันที่คำนวณใหม่
+                'version' => $nextVersion, // ✅ Fix: ใช้เวอร์ชันคำนวณใหม่
                 'is_active' => true,
                 'is_default' => $isDefault,
-                // 'created_by' => $userId
             ]);
 
-            // 3. 🔩 Create Components (บันทึกวัตถุดิบ)
+            // 3. 🔩 Create Components (วัตถุดิบ)
             if (!empty($data['components'])) {
                 foreach ($data['components'] as $component) {
                     $bom->components()->create([
@@ -55,12 +52,10 @@ class CreateBomUseCase
             // 4. ✨ Create By-products (✅ รองรับ Req 3: ผลพลอยได้)
             if (!empty($data['byproducts'])) {
                 foreach ($data['byproducts'] as $byproduct) {
-                    // ตรวจสอบว่ามีค่าครบถ้วนป้องกัน error
                     if (!empty($byproduct['item_uuid']) && !empty($byproduct['quantity'])) {
                         $bom->byproducts()->create([
                             'item_uuid' => $byproduct['item_uuid'],
                             'quantity' => $byproduct['quantity'],
-                            // 'uom' => ... (ถ้ามี)
                         ]);
                     }
                 }

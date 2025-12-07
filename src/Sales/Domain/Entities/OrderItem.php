@@ -2,6 +2,8 @@
 
 namespace TmrEcosystem\Sales\Domain\Entities;
 
+use TmrEcosystem\Shared\Domain\ValueObjects\Money;
+
 class OrderItem
 {
     public function __construct(
@@ -9,7 +11,6 @@ class OrderItem
         public readonly string $productName,
         public readonly float $unitPrice,
         public readonly int $quantity,
-        // id อาจจะเป็น null ถ้าเพิ่ง new ใน memory แต่จะมีค่าถ้ามาจาก DB
         public readonly ?int $id = null,
         public readonly int $qtyShipped = 0
     ) {}

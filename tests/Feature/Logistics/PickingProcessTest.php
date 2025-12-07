@@ -4,7 +4,6 @@ namespace Tests\Feature\Logistics;
 
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use App\Models\Company;
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem;
@@ -12,6 +11,7 @@ use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 // ✅ เพิ่ม Import SalesOrderItemModel
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderItemModel;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
+use TmrEcosystem\Shared\Domain\Models\Company;
 use TmrEcosystem\Stock\Infrastructure\Persistence\Eloquent\Models\StockLevelModel;
 
 class PickingProcessTest extends TestCase

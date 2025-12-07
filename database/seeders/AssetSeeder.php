@@ -3,9 +3,9 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Company; // (1. Import Company Model จากไฟล์ของคุณ)
 use TmrEcosystem\Maintenance\Domain\Models\Asset; // (2. Import Asset Model)
 use Illuminate\Database\Eloquent\Factories\Sequence; // (3. Import Sequence สำหรับสร้าง Code)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class AssetSeeder extends Seeder
 {

@@ -3,9 +3,9 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Company;
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\HRM\Domain\Models\EmployeeProfile;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class EmployeeProfileSeeder extends Seeder
 {

@@ -89,17 +89,22 @@ class Order
 
     // --- Domain Behaviors ---
 
-    // เพิ่ม parameter $id = null
     public function addItem(string $productId, string $productName, float $price, int $quantity, ?string $id = null): void
     {
         if (in_array($this->status, [OrderStatus::Cancelled, OrderStatus::Completed])) {
             throw new Exception("Cannot modify finalized order.");
         }
 
-        // ส่ง id เข้าไปใน Constructor ของ OrderItem (ถ้ามี)
-        // หมายเหตุ: คุณต้องเช็คไฟล์ OrderItem.php ด้วยว่า Constructor รับ id เป็นลำดับที่เท่าไหร่
-        // สมมติว่า OrderItem::__construct($productId, $name, $price, $qty, $id)
-        $item = new OrderItem($productId, $productName, $price, $quantity, $id);
+        // ✅ FIX: ใช้ Named Arguments เพื่อความถูกต้องแม่นยำ
+        // และ Cast $id จาก string เป็น int (เพราะ OrderItem รับ ?int)
+        $item = new OrderItem(
+            productId: $productId,
+            productName: $productName,
+            unitPrice: $price,     // ระบุชื่อให้ตรงกับ OrderItem
+            quantity: $quantity,
+            id: $id ? (int) $id : null, // แปลง string เป็น int
+            qtyShipped: 0
+        );
 
         $this->items->push($item);
         $this->recalculateTotal();

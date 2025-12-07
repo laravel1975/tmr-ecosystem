@@ -6,13 +6,13 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 use Faker\Factory as Faker;
-use App\Models\Company;
 use Illuminate\Support\Facades\DB; // ✅ เพิ่ม DB Facade
 
 // Models
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\InventoryCategory;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\InventoryUom;
+use TmrEcosystem\Shared\Domain\Models\Company;
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel;
 use TmrEcosystem\Stock\Infrastructure\Persistence\Eloquent\Models\StockLevelModel;
 

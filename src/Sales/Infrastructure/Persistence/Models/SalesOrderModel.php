@@ -15,6 +15,8 @@ class SalesOrderModel extends Model
     use HasUuids, SoftDeletes;
 
     protected $table = 'sales_orders';
+    protected $keyType = 'string';
+    public $incrementing = false;
 
     // ป้องกัน Mass Assignment แต่ระวังตอนใช้นะครับ
     protected $guarded = [];
@@ -41,5 +43,10 @@ class SalesOrderModel extends Model
     public function pickingSlips(): HasMany
     {
         return $this->hasMany(PickingSlip::class, 'order_id');
+    }
+
+    public function isBackorder(): bool
+    {
+        return $this->stock_status === 'backorder';
     }
 }

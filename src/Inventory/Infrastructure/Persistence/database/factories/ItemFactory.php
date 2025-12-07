@@ -3,8 +3,8 @@
 namespace TmrEcosystem\Inventory\Infrastructure\Persistence\Database\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
-use App\Models\Company; // <-- (สำคัญ) Import Company Model (อิงจาก Asset.php, User.php)
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\Item as ItemModel; // <-- (สำคัญ) ระบุ Model ของเรา
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 /**
  * @extends \Illuminate\Database\Eloquent\Factories\Factory<\Src\Inventory\Infrastructure\Persistence\Eloquent\Models\Item>

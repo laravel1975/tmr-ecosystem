@@ -3,7 +3,6 @@
 namespace TmrEcosystem\HRM\Presentation\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\Company; // (Shared Kernel)
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -11,6 +10,7 @@ use TmrEcosystem\HRM\Domain\Models\Department;
 use TmrEcosystem\HRM\Domain\Models\Position; // (Model ใหม่)
 use TmrEcosystem\HRM\Presentation\Requests\StorePositionRequest; // (Request ใหม่)
 use TmrEcosystem\HRM\Presentation\Requests\UpdatePositionRequest; // (Request ใหม่)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class PositionController extends Controller
 {

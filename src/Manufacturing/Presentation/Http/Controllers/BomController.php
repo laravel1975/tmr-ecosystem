@@ -52,55 +52,48 @@ class BomController extends Controller
     {
         $companyId = $request->user()->company_id;
 
-        // ✅ Fix: Base Query พร้อม Join UOM
+        // Base Query พร้อม Join UOM เพื่อดึงหน่วยนับ
         $baseItemQuery = DB::table('inventory_items')
             ->leftJoin('inventory_uoms', 'inventory_items.uom_id', '=', 'inventory_uoms.id')
             ->where('inventory_items.company_id', $companyId)
             ->whereNull('inventory_items.deleted_at')
             ->orderBy('inventory_items.name');
 
-        // Helper Map Function
         $mapItem = fn($item) => [
             'id' => $item->uuid,
             'name' => "{$item->part_number} - {$item->name}",
-            'price' => (float)($item->target_price ?? 0), // ใช้ตัวแปรชั่วคราวรับค่า
-            'uom' => $item->uom_symbol ?? '', // ✅ ใช้ Alias จากการ Join
+            'price' => (float)($item->target_price ?? 0),
+            'uom' => $item->uom_symbol ?? '',
         ];
 
-        // 1. Finished Goods: สินค้าที่ผลิตได้
+        // 1. Finished Goods: สินค้าที่ผลิตได้ (is_manufactured = 1)
         $finishedGoods = (clone $baseItemQuery)
-            // เช็คว่ามี column is_manufactured หรือไม่ (ถ้ายังไม่ได้ Migrate ให้ลบบรรทัดนี้ก่อน)
             ->where('inventory_items.is_manufactured', true)
             ->select(
                 'inventory_items.uuid',
                 'inventory_items.part_number',
                 'inventory_items.name',
-                'inventory_items.sale_price as target_price', // Finished Good ใช้ราคาขายแสดง
-                'inventory_uoms.symbol as uom_symbol' // ✅ ดึง Symbol มาเป็น alias
+                'inventory_items.sale_price as target_price',
+                'inventory_uoms.symbol as uom_symbol'
             )
-            ->get()
-            ->map($mapItem);
+            ->get()->map($mapItem);
 
-        // 2. Raw Materials: วัตถุดิบ
+        // 2. Raw Materials: วัตถุดิบ (is_component = 1)
         $rawMaterials = (clone $baseItemQuery)
             ->where('inventory_items.is_component', true)
             ->select(
                 'inventory_items.uuid',
                 'inventory_items.part_number',
                 'inventory_items.name',
-                'inventory_items.cost_price as target_price', // Raw Mat ใช้ราคาทุนแสดง
+                'inventory_items.cost_price as target_price',
                 'inventory_uoms.symbol as uom_symbol'
             )
-            ->get()
-            ->map($mapItem);
-
-        // 3. By Products: ผลพลอยได้ (ใช้ Logic เดียวกับ Raw Materials หรือ Finished Goods ก็ได้)
-        $byProducts = $rawMaterials;
+            ->get()->map($mapItem);
 
         return Inertia::render('Manufacturing/BOM/Create', [
             'finishedGoods' => $finishedGoods,
             'rawMaterials' => $rawMaterials,
-            'byProducts' => $byProducts,
+            'byProducts' => $rawMaterials, // Reuse list วัตถุดิบเป็นผลพลอยได้
         ]);
     }
 

@@ -2,11 +2,11 @@
 
 namespace Database\Seeders;
 
-use App\Models\Company;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
 use TmrEcosystem\IAM\Domain\Models\User;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class RolePermissionSeeder extends Seeder
 {

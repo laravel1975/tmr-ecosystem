@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Company; // <-- 1. Import Model
 use Illuminate\Support\Str; // <-- 2. Import Str (สำหรับ Slug)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class CompanySeeder extends Seeder
 {

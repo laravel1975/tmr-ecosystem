@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Company; // (Shared Kernel)
 use TmrEcosystem\HRM\Domain\Models\Department; // (HRM Model)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class DepartmentSeeder extends Seeder
 {

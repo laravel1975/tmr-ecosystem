@@ -6,7 +6,7 @@ use Illuminate\Database\Seeder;
 use TmrEcosystem\Maintenance\Domain\Models\MaintenancePlan;
 use TmrEcosystem\Maintenance\Domain\Models\MaintenanceType;
 use TmrEcosystem\Maintenance\Domain\Models\Asset;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class MaintenancePlanSeeder extends Seeder
 {

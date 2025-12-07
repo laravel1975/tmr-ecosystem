@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use TmrEcosystem\Shared\Infrastructure\Persistence\Traits\BelongsToCompany;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
+use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 
 class ProductionOrder extends Model
 {
@@ -36,5 +37,11 @@ class ProductionOrder extends Model
     public function bom(): BelongsTo
     {
         return $this->belongsTo(BillOfMaterial::class, 'bom_uuid', 'uuid');
+    }
+
+    // (Optional) ถ้าต้องการดึงข้อมูล Sales Order
+    public function salesOrder()
+    {
+        return $this->belongsTo(SalesOrderModel::class, 'origin_uuid', 'uuid');
     }
 }

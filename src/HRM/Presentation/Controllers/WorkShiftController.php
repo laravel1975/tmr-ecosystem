@@ -3,13 +3,13 @@
 namespace TmrEcosystem\HRM\Presentation\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\Company; // (Shared Kernel)
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 use TmrEcosystem\HRM\Domain\Models\WorkShift; // (Model ที่เราสร้าง)
 use TmrEcosystem\HRM\Presentation\Requests\StoreWorkShiftRequest;
 use TmrEcosystem\HRM\Presentation\Requests\UpdateWorkShiftRequest;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class WorkShiftController extends Controller
 {

@@ -8,7 +8,6 @@ use Inertia\Response;
 // --- (Imports ที่เราต้องใช้) ---
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\IAM\Domain\Models\Role;
-use App\Models\Company;
 use Spatie\Activitylog\Models\Activity;
 
 class DashboardController extends Controller

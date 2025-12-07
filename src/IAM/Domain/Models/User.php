@@ -2,7 +2,6 @@
 
 namespace TmrEcosystem\IAM\Domain\Models;
 
-use App\Models\Company;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory; // <-- 1. Import HasFactory (มีอยู่แล้ว)
 use Database\Factories\UserFactory; // <--- 2. (สำคัญ) Import UserFactory ของเรา
@@ -15,6 +14,7 @@ use Spatie\Permission\Traits\HasRoles;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 use TmrEcosystem\HRM\Domain\Models\EmployeeProfile;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class User extends Authenticatable implements MustVerifyEmail
 {

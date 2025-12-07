@@ -3,7 +3,6 @@
 namespace TmrEcosystem\HRM\Presentation\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\Company; // (Shared Kernel)
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -16,6 +15,7 @@ use TmrEcosystem\HRM\Domain\Models\EmployeeProfile;
 use TmrEcosystem\IAM\Domain\Models\User; // (IAM Context)
 use TmrEcosystem\HRM\Presentation\Requests\StoreEmployeeRequest;
 use TmrEcosystem\HRM\Presentation\Requests\UpdateEmployeeRequest;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class EmployeeController extends Controller
 {

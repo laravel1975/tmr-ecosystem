@@ -7,7 +7,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use TmrEcosystem\Inventory\Application\DTOs\ItemData;
 use TmrEcosystem\Inventory\Application\UseCases\ManageItems\UpdateItemUseCase;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class UpdateItemTest extends TestCase
 {

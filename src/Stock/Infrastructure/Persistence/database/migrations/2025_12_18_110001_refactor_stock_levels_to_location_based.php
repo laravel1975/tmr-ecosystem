@@ -5,7 +5,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Models\Company; // Import เพื่อใช้ foreignIdFor
 
 return new class extends Migration
 {

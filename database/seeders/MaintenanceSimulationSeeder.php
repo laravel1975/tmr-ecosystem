@@ -14,7 +14,7 @@ use TmrEcosystem\Maintenance\Domain\Models\MaintenanceType;
 use TmrEcosystem\Maintenance\Domain\Models\FailureCode;
 use TmrEcosystem\Maintenance\Domain\Models\ActivityType;
 use TmrEcosystem\Maintenance\Domain\Models\SparePart;
-use App\Models\Company;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class MaintenanceSimulationSeeder extends Seeder
 {

@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Company;
 use TmrEcosystem\Maintenance\Domain\Models\SparePart;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class SparePartSeeder extends Seeder
 {

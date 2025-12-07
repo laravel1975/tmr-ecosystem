@@ -3,7 +3,6 @@
 namespace TmrEcosystem\IAM\Presentation\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\Company;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -15,6 +14,7 @@ use TmrEcosystem\HRM\Domain\Models\EmployeeProfile;
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\IAM\Presentation\Requests\StoreUserRequest;
 use TmrEcosystem\IAM\Presentation\Requests\UpdateUserRequest;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class UserController extends Controller
 {

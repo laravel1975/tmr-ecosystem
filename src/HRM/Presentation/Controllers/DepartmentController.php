@@ -3,7 +3,6 @@
 namespace TmrEcosystem\HRM\Presentation\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Models\Company; // (1. Import Company)
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -11,6 +10,7 @@ use Inertia\Response;
 use TmrEcosystem\HRM\Domain\Models\Department;
 use TmrEcosystem\HRM\Presentation\Requests\StoreDepartmentRequest;
 use TmrEcosystem\HRM\Presentation\Requests\UpdateDepartmentRequest;
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class DepartmentController extends Controller
 {

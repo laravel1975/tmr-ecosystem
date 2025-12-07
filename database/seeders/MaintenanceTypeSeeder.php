@@ -4,7 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use TmrEcosystem\Maintenance\Domain\Models\MaintenanceType; // (1. Import Model)
-use App\Models\Company; // (2. Import Company)
+use TmrEcosystem\Shared\Domain\Models\Company;
 
 class MaintenanceTypeSeeder extends Seeder
 {
