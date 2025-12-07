@@ -6,8 +6,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids; // (สำหรับจัดการ 'uuid')
-use App\Models\Scopes\CompanyScope; // (Import Global Scope)
-use App\Models\Company; // (Import Company Model)
+use src\Shared\Domain\Models\Company;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
+
 // (เราจะสร้าง Factory นี้ในอนาคต)
 // use TmrEcosystem\Warehouse\Infrastructure\Persistence\Database\Factories\WarehouseFactory;
 

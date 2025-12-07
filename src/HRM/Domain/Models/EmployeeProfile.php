@@ -2,14 +2,14 @@
 
 namespace TmrEcosystem\HRM\Domain\Models;
 
-use App\Models\Company;
-use App\Models\Scopes\CompanyScope; // <-- ใช้ Scope ที่คุณสร้างไว้
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Facades\Storage;
 use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Maintenance\Domain\Models\MaintenanceAssignment;
+use TmrEcosystem\Shared\Domain\Models\Company;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class EmployeeProfile extends Model
 {

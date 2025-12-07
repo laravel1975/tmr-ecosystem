@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use App\Models\Scopes\CompanyScope;
-use App\Models\Company;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use src\Shared\Domain\Models\Company;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Database\Factories\ItemFactory;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Casts\MoneyCast;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class ItemModel extends Model
 {
@@ -30,6 +31,8 @@ class ItemModel extends Model
         'category_id', // New FK
         'average_cost',
         'uom_id',      // New FK
+        'cost_price',   // ✅ เพิ่ม (ใช้ MoneyCast)
+        'sale_price',   // ✅ เพิ่ม (ใช้ MoneyCast)
         'image_path',
         'tracking_strategy'
     ];
@@ -38,6 +41,8 @@ class ItemModel extends Model
     {
         return [
             'average_cost' => 'decimal:4',
+            'cost_price' => MoneyCast::class, // แปลง int <-> Money
+            'sale_price' => MoneyCast::class, // แปลง int <-> Money
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',

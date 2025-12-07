@@ -2,10 +2,10 @@
 
 namespace TmrEcosystem\HRM\Domain\Models;
 
-use App\Models\Company;
-use App\Models\Scopes\CompanyScope;
 use Illuminate\Database\Eloquent\Model;
+use src\Shared\Domain\Models\Company;
 use TmrEcosystem\IAM\Domain\Models\User; // (IAM Context)
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class OvertimeRequest extends Model
 {

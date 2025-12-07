@@ -2,11 +2,11 @@
 
 namespace TmrEcosystem\Maintenance\Domain\Models;
 
-use App\Models\Company;
-use App\Models\Scopes\CompanyScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use src\Shared\Domain\Models\Company;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 /**
  * @property int $id

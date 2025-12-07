@@ -5,8 +5,8 @@ namespace TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use App\Models\Scopes\CompanyScope;
-use App\Models\Company;
+use src\Shared\Domain\Models\Company;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class InventoryUom extends Model
 {

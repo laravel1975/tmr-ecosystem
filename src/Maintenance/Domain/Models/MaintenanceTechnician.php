@@ -2,12 +2,12 @@
 
 namespace TmrEcosystem\Maintenance\Domain\Models;
 
-use App\Models\Company;
-use App\Models\Scopes\CompanyScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use src\Shared\Domain\Models\Company;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 /**
  * นี่คือ "สำเนา" ข้อมูล Technician จาก HRM Bounded Context

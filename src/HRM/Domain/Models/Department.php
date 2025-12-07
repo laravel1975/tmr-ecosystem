@@ -2,10 +2,10 @@
 
 namespace TmrEcosystem\HRM\Domain\Models;
 
-use App\Models\Company;
-use App\Models\Scopes\CompanyScope; // <-- ใช้ Scope ที่คุณสร้างไว้
 use Illuminate\Database\Eloquent\Model;
+use src\Shared\Domain\Models\Company;
 use TmrEcosystem\IAM\Domain\Models\User;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class Department extends Model
 {

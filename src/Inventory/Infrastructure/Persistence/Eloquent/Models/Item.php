@@ -6,10 +6,9 @@ namespace TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-// use Database\Factories\Inventory\ItemFactory; // (สมมติว่า Factory ของคุณจะอยู่ที่นี่)
-use App\Models\Scopes\CompanyScope; // <-- (สำคัญ) Import Scope ของคุณ
-use App\Models\Company; // <-- (สำคัญ) Import Company Model
+use src\Shared\Domain\Models\Company;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Database\Factories\ItemFactory;
+use TmrEcosystem\Shared\Infrastructure\Persistence\Scopes\CompanyScope;
 
 class Item extends Model
 {
