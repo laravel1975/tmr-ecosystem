@@ -26,10 +26,12 @@ interface DeliveryItem {
     product_id: string;
     product_name: string;
     quantity_ordered: number;
-    qty_shipped: number;
-    qty_backorder: number;
+    qty_shipped: number;   // ยอดส่งจริงในรอบนี้
+    qty_backorder?: number; // ทำให้เป็น Optional เพื่อความยืดหยุ่น
     unit_price: number;
-    image_url?: string | null; // ✅ Field นี้มีอยู่แล้ว
+    image_url?: string | null;
+    description?: string;
+    barcode?: string;
 }
 
 interface DeliveryNote {
@@ -111,7 +113,11 @@ export default function DeliveryProcess({ auth, delivery, items, vehicles }: Pro
                         <p className="text-sm text-gray-500 mt-1">Order Ref: <span className="font-medium text-gray-700">{delivery.order_number}</span> | Picking Ref: <span className="font-medium text-gray-700">{delivery.picking_number}</span></p>
                     </div>
                     <div className="flex gap-2">
-                        <Button variant="outline" onClick={() => window.print()} className="gap-2"><Printer className="w-4 h-4" /> Print DO</Button>
+                        <Button variant="outline" asChild className="gap-2">
+                            <a href={route('logistics.delivery.pdf', delivery.id)} target="_blank">
+                                <Printer className="w-4 h-4" /> Print DO
+                            </a>
+                        </Button>
                         {delivery.status === 'ready_to_ship' && (<><Button variant="destructive" onClick={handleCancelReturn} className="gap-2"><RotateCcw className="w-4 h-4" /> Cancel & Return</Button>{!isInShipmentPlan && (<Button className="bg-blue-600 hover:bg-blue-700 gap-2" onClick={() => setIsShipModalOpen(true)}><Truck className="w-4 h-4" /> Confirm Shipment</Button>)}</>)}
                         {delivery.status === 'shipped' && (<Button className="bg-green-600 hover:bg-green-700 gap-2" onClick={() => setIsDeliverModalOpen(true)}><CheckCircle2 className="w-4 h-4" /> Mark as Delivered</Button>)}
                     </div>
@@ -144,19 +150,18 @@ export default function DeliveryProcess({ auth, delivery, items, vehicles }: Pro
                             <TableHeader>
                                 <TableRow>
                                     <TableHead className="w-[50px]">#</TableHead>
-                                    <TableHead className="w-[80px] text-center">Image</TableHead> {/* ✅ เพิ่ม Column รูป */}
+                                    <TableHead className="w-[80px] text-center">Image</TableHead>
                                     <TableHead>Product Details</TableHead>
                                     <TableHead className="text-center text-gray-400">Total Ordered</TableHead>
-                                    <TableHead className="text-center bg-blue-50/50 text-blue-700">This Shipment</TableHead>
-                                    <TableHead className="text-center text-red-400">Backorder</TableHead>
+                                    <TableHead className="text-right pr-6 bg-blue-50/50 text-blue-700 font-bold border-l">Shipped (This Delivery)</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {items.map((item, idx) => (
+                                {items.length > 0 ? items.map((item, idx) => (
                                     <TableRow key={item.id}>
                                         <TableCell className="text-gray-500">{idx + 1}</TableCell>
 
-                                        {/* ✅ แสดงรูปภาพสินค้า */}
+                                        {/* Image */}
                                         <TableCell className="text-center">
                                             {item.image_url ? (
                                                 <ImageViewer images={[item.image_url]} alt={item.product_name} className="w-10 h-10 rounded border bg-white object-contain" />
@@ -166,15 +171,22 @@ export default function DeliveryProcess({ auth, delivery, items, vehicles }: Pro
                                         </TableCell>
 
                                         <TableCell>
-                                            <div className="font-medium">{item.product_name}</div>
-                                            <div className="text-xs text-gray-500">{item.product_id}</div>
+                                            <div className="font-medium text-gray-900">{item.product_name}</div>
+                                            <div className="text-xs text-gray-500 font-mono mt-0.5">{item.product_id}</div>
+                                            {item.barcode && <div className="text-[10px] text-gray-400 font-mono">SKU: {item.barcode}</div>}
                                         </TableCell>
-                                        <TableCell className="text-center text-gray-400">{item.quantity_ordered}</TableCell>
-                                        <TableCell className="text-center font-bold text-blue-600 bg-blue-50/30 text-lg border-x border-blue-100">{item.qty_shipped}</TableCell>
-                                        <TableCell className="text-center">{item.qty_backorder > 0 ? (<Badge variant="outline" className="bg-red-50 text-red-600 border-red-200">{item.qty_backorder}</Badge>) : (<span className="text-gray-300">-</span>)}</TableCell>
+
+                                        <TableCell className="text-center text-gray-500 font-medium">
+                                            {item.quantity_ordered}
+                                        </TableCell>
+
+                                        <TableCell className="text-right pr-6 font-bold text-blue-700 text-lg bg-blue-50/20 border-l border-blue-100">
+                                            {item.qty_shipped}
+                                        </TableCell>
                                     </TableRow>
-                                ))}
-                                {items.length === 0 && (<TableRow><TableCell colSpan={7} className="text-center h-24 text-gray-400">No items found.</TableCell></TableRow>)}
+                                )) : (
+                                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-gray-400">No items in this shipment.</TableCell></TableRow>
+                                )}
                             </TableBody>
                         </Table>
                     </CardContent>

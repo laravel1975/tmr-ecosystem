@@ -3,14 +3,15 @@ import { Head, Link } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import {
     ArrowLeft, Printer, MapPin, Phone,
-    FileText, User, Calendar, Package, Truck, Image as ImageIcon
+    FileText, User, Calendar, Package, Truck
 } from "lucide-react";
 import { format } from 'date-fns';
 import InventoryNavigationMenu from '@/Pages/Inventory/Partials/InventoryNavigationMenu';
 import ImageViewer from '@/Components/ImageViewer';
 import { Button } from "@/Components/ui/button";
 import { Badge } from "@/Components/ui/badge";
-import { Separator } from "@/Components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table"; // ✅ ใช้ Table Component
+import { cn } from '@/lib/utils';
 
 // --- Types ---
 interface DeliveryItem {
@@ -21,8 +22,9 @@ interface DeliveryItem {
     barcode?: string;
     quantity_ordered: number;
     qty_shipped: number;
-    qty_backorder: number;
+    qty_backorder?: number;
     image_url?: string;
+    uom?: string;
 }
 
 interface DeliveryNote {
@@ -35,21 +37,31 @@ interface DeliveryNote {
     contact_phone?: string;
     carrier_name?: string;
     tracking_number?: string;
+    picking_number?: string;
     order?: {
         order_number: string;
         customer?: {
             name: string;
+            address?: string;
+            phone?: string;
         }
     };
-    items: DeliveryItem[];
+    // รองรับกรณี Items ติดมากับ Delivery Object
+    items?: DeliveryItem[];
 }
 
 interface Props {
     auth: any;
     delivery: DeliveryNote;
+    items?: DeliveryItem[]; // ทำให้เป็น Optional เพื่อกัน Error
 }
 
-export default function DeliveryShow({ auth, delivery }: Props) {
+export default function DeliveryShow({ auth, delivery, items = [] }: Props) { // ✅ 1. ใส่ Default Value = []
+
+    // ✅ 2. Safe Fallback Logic:
+    // ถ้า items (prop แยก) ไม่มีค่า ให้ลองไปหาใน delivery.items แทน
+    // ถ้าไม่มีทั้งคู่ ให้เป็น array ว่าง [] เพื่อกัน .map() พัง
+    const safeItems = (items && items.length > 0) ? items : (delivery.items || []);
 
     const getStatusBadge = (status: string) => {
         const styles: Record<string, string> = {
@@ -62,12 +74,12 @@ export default function DeliveryShow({ auth, delivery }: Props) {
         };
         return (
             <Badge variant="outline" className={`px-3 py-1 rounded-full font-semibold print:hidden ${styles[status] || "bg-gray-100 text-gray-700"}`}>
-                {status.toUpperCase().replace('_', ' ')}
+                {status ? status.toUpperCase().replace('_', ' ') : 'UNKNOWN'}
             </Badge>
         );
     };
 
-    const encodeCode128 = (text: string) => text; // Placeholder for barcode font
+    const encodeCode128 = (text: string) => text;
 
     return (
         <AuthenticatedLayout user={auth.user} navigationMenu={<div className="print:hidden"><InventoryNavigationMenu /></div>}>
@@ -108,10 +120,7 @@ export default function DeliveryShow({ auth, delivery }: Props) {
                                 </span>
                             </div>
                         </div>
-                        {/* <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none bg-white shadow-sm gap-2 border-gray-300">
-                            <Printer className="w-4 h-4" /> Print DO
-                        </Button> */}
-                        {/* ✅ เปลี่ยนเป็นปุ่ม Download PDF */}
+
                         <a href={route('logistics.delivery.pdf', delivery.id)} target="_blank">
                             <Button variant="outline" className="flex-1 sm:flex-none bg-white shadow-sm gap-2 border-gray-300">
                                 <Printer className="w-4 h-4" /> Print PDF
@@ -136,13 +145,16 @@ export default function DeliveryShow({ auth, delivery }: Props) {
                                 </div>
                                 <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm text-gray-600">
                                     <div className="flex items-center gap-2"><Calendar className="w-4 h-4 text-gray-400" /> <span className="font-semibold text-gray-900">Date:</span></div>
-                                    <div>{format(new Date(), 'dd MMM yyyy')}</div>
+                                    <div>{delivery.created_at ? format(new Date(delivery.created_at), 'dd MMM yyyy') : '-'}</div>
 
                                     <div className="flex items-center gap-2"><Truck className="w-4 h-4 text-gray-400" /> <span className="font-semibold text-gray-900">Carrier:</span></div>
                                     <div>{delivery.carrier_name || '-'}</div>
 
                                     <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-gray-400" /> <span className="font-semibold text-gray-900">Tracking:</span></div>
                                     <div className="font-mono">{delivery.tracking_number || '-'}</div>
+
+                                    <div className="flex items-center gap-2"><Package className="w-4 h-4 text-gray-400" /> <span className="font-semibold text-gray-900">Ref Picking:</span></div>
+                                    <div className="font-mono">{delivery.picking_number || '-'}</div>
                                 </div>
                             </div>
 
@@ -172,7 +184,7 @@ export default function DeliveryShow({ auth, delivery }: Props) {
                                 <div className="space-y-3 text-sm">
                                     <div className="flex justify-between border-b border-gray-200 pb-2">
                                         <span className="text-gray-500">Customer Name</span>
-                                        <span className="font-bold text-gray-900">{delivery.order?.customer?.name}</span>
+                                        <span className="font-bold text-gray-900">{delivery.order?.customer?.name || 'N/A'}</span>
                                     </div>
                                     <div className="flex justify-between border-b border-gray-200 pb-2">
                                         <span className="text-gray-500">Order Ref.</span>
@@ -192,63 +204,71 @@ export default function DeliveryShow({ auth, delivery }: Props) {
                                 </h3>
                                 <div className="text-sm">
                                     <p className="text-gray-600 leading-relaxed mb-3 min-h-[40px]">
-                                        {delivery.shipping_address || <span className="italic text-gray-400">No address provided</span>}
+                                        {delivery.shipping_address || delivery.order?.customer?.address || <span className="italic text-gray-400">No address provided</span>}
                                     </p>
-                                    {delivery.contact_phone && (
+                                    {(delivery.contact_phone || delivery.order?.customer?.phone) && (
                                         <div className="inline-flex items-center gap-2 bg-white px-3 py-1 rounded-full border border-gray-200 text-xs font-medium text-gray-600">
-                                            <Phone className="w-3 h-3" /> {delivery.contact_phone}
+                                            <Phone className="w-3 h-3" /> {delivery.contact_phone || delivery.order?.customer?.phone}
                                         </div>
                                     )}
                                 </div>
                             </div>
                         </div>
 
-                        {/* 3. Items Table */}
+                        {/* 3. Items Table (✅ Fixed map error here) */}
                         <div className="mb-10">
                             <div className="rounded-lg border border-gray-200 overflow-hidden">
-                                <table className="w-full text-sm">
-                                    <thead className="bg-gray-50 text-gray-500 font-semibold uppercase text-xs">
-                                        <tr>
-                                            <th className="py-3 pl-4 text-left w-12">#</th>
-                                            <th className="py-3 text-left">Product Details</th>
-                                            <th className="py-3 text-center w-32">Ordered</th>
-                                            <th className="py-3 text-right w-32 pr-6 bg-orange-50/50 text-orange-700 border-l">Shipped</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {delivery.items.map((item, index) => (
-                                            <tr key={index} className="group page-break hover:bg-gray-50/50 transition-colors">
-                                                <td className="py-4 pl-4 align-top text-gray-400 font-medium">{index + 1}</td>
-                                                <td className="py-4 align-top">
-                                                    <div className="flex gap-4">
-                                                        {item.image_url ? (
-                                                            <div className="w-12 h-12 rounded bg-gray-50 border border-gray-100 flex-shrink-0 overflow-hidden print-hidden">
-                                                                <ImageViewer images={[item.image_url]} alt={item.product_name} className="w-full h-full object-cover" />
+                                <Table>
+                                    <TableHeader className="bg-gray-50 text-gray-500 font-semibold uppercase text-xs">
+                                        <TableRow>
+                                            <TableHead className="py-3 pl-4 text-left w-12">#</TableHead>
+                                            <TableHead className="py-3 text-left">Product Details</TableHead>
+                                            <TableHead className="py-3 text-center w-32">Ordered</TableHead>
+                                            <TableHead className="py-3 text-right w-32 pr-6 bg-orange-50/50 text-orange-700 border-l">Shipped</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody className="divide-y divide-gray-100">
+                                        {safeItems.length > 0 ? (
+                                            safeItems.map((item, index) => (
+                                                <TableRow key={index} className="group page-break hover:bg-gray-50/50 transition-colors">
+                                                    <TableCell className="py-4 pl-4 align-top text-gray-400 font-medium">{index + 1}</TableCell>
+                                                    <TableCell className="py-4 align-top">
+                                                        <div className="flex gap-4">
+                                                            {item.image_url ? (
+                                                                <div className="w-12 h-12 rounded bg-gray-50 border border-gray-100 flex-shrink-0 overflow-hidden print-hidden">
+                                                                    <ImageViewer images={[item.image_url]} alt={item.product_name} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            ) : (
+                                                                <div className="w-12 h-12 rounded bg-gray-50 border border-gray-100 flex-shrink-0 flex items-center justify-center text-gray-300 print-hidden">
+                                                                    <Package className="w-5 h-5" />
+                                                                </div>
+                                                            )}
+                                                            <div>
+                                                                <div className="font-bold text-gray-900 text-base">{item.product_name || item.product_id}</div>
+                                                                <div className="text-gray-500 text-xs mt-1">
+                                                                    {item.description || '-'}
+                                                                </div>
+                                                                <div className="text-[10px] font-mono text-gray-400 mt-1">SKU: {item.barcode || item.product_id}</div>
                                                             </div>
-                                                        ) : (
-                                                            <div className="w-12 h-12 rounded bg-gray-50 border border-gray-100 flex-shrink-0 flex items-center justify-center text-gray-300 print-hidden">
-                                                                <Package className="w-5 h-5" />
-                                                            </div>
-                                                        )}
-                                                        <div>
-                                                            <div className="font-bold text-gray-900 text-base">{item.product_name || item.product_id}</div>
-                                                            <div className="text-gray-500 text-xs mt-1">
-                                                                {item.description || '-'}
-                                                            </div>
-                                                            <div className="text-[10px] font-mono text-gray-400 mt-1">SKU: {item.barcode || item.product_id}</div>
                                                         </div>
-                                                    </div>
-                                                </td>
-                                                <td className="py-4 align-top text-center text-gray-400 font-medium">
-                                                    {item.quantity_ordered}
-                                                </td>
-                                                <td className="py-4 align-top text-right pr-6 font-bold text-lg text-orange-700 bg-orange-50/10 border-l border-gray-100">
-                                                    {item.qty_shipped} <span className="text-xs font-normal text-gray-500">Units</span>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                                    </TableCell>
+                                                    <TableCell className="py-4 align-top text-center text-gray-400 font-medium">
+                                                        {item.quantity_ordered}
+                                                    </TableCell>
+                                                    <TableCell className="py-4 align-top text-right pr-6 font-bold text-lg text-orange-700 bg-orange-50/10 border-l border-gray-100">
+                                                        {item.qty_shipped} <span className="text-xs font-normal text-gray-500">{item.uom || 'Units'}</span>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))
+                                        ) : (
+                                            <TableRow>
+                                                <TableCell colSpan={4} className="h-24 text-center text-gray-400">
+                                                    No items found in this shipment.
+                                                </TableCell>
+                                            </TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
                             </div>
                         </div>
 

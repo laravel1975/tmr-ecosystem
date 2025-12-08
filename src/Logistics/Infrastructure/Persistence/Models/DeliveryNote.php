@@ -36,4 +36,19 @@ class DeliveryNote extends Model
     {
         return $this->belongsTo(Shipment::class, 'shipment_id');
     }
+
+    // ✅ [เพิ่มใหม่] Helper Relation: ดึงรายการสินค้า "เฉพาะที่อยู่ในใบส่งของรอบนี้"
+    // โดยการวิ่งผ่าน PickingSlip ไปหา PickingSlipItems
+    // ช่วยให้ Frontend แสดงรายการของ Delivery Note นี้ได้ถูกต้องตามหลัก 1:N
+    public function items()
+    {
+        return $this->hasManyThrough(
+            PickingSlipItem::class, // ปลายทาง (Items)
+            PickingSlip::class,     // ตัวกลาง (Picking Slip)
+            'id',                   // PK ของ PickingSlip (เชื่อมกับ picking_slip_id ใน DeliveryNote)
+            'picking_slip_id',      // FK ใน PickingSlipItems (เชื่อมกับ PickingSlip)
+            'picking_slip_id',      // Local Key ใน DeliveryNote (FK ที่ชี้ไป PickingSlip)
+            'id'                    // Local Key ใน PickingSlip
+        );
+    }
 }

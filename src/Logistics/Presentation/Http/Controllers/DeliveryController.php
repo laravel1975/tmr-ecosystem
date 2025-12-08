@@ -29,7 +29,7 @@ class DeliveryController extends Controller
     public function index(Request $request)
     {
         $query = DeliveryNote::query()
-            ->with(['order.customer'])
+            ->with(['order.customer', 'pickingSlip']) // Eager load picking slip
             ->join('sales_orders', 'sales_delivery_notes.order_id', '=', 'sales_orders.id')
             ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
             ->select(
@@ -65,6 +65,8 @@ class DeliveryController extends Controller
                 'carrier_name' => $dn->carrier_name,
                 'tracking_number' => $dn->tracking_number,
                 'created_at' => $dn->created_at->format('d/m/Y H:i'),
+                // เพิ่มข้อมูล Picking Ref ให้หน้าบ้านรู้ว่ามาจากใบหยิบไหน
+                'picking_ref' => $dn->pickingSlip->picking_number ?? '-',
             ]);
 
         return Inertia::render('Logistics/Delivery/Index', [
@@ -75,30 +77,33 @@ class DeliveryController extends Controller
 
     public function show(string $id)
     {
+        // 1. ดึง Delivery Note พร้อม Picking Slip Items (1:N Supported)
         $delivery = DeliveryNote::with([
             'order.customer',
-            'pickingSlip.items.salesOrderItem',
+            'pickingSlip.items', // ดึง items ผ่าน pickingSlip
             'shipment'
         ])->findOrFail($id);
 
+        // 2. Map Items จาก Picking Slip (เฉพาะของในกล่องนี้)
         $items = $delivery->pickingSlip->items->map(function ($pickItem) {
-            $salesItem = $pickItem->salesOrderItem;
-
-            $totalOrdered = $salesItem ? (float)$salesItem->quantity : 0;
-            $totalShippedGlobal = $salesItem ? (float)$salesItem->qty_shipped : 0;
-            $qtyThisDelivery = (float)$pickItem->quantity_picked;
-            $backorderQty = max(0, $totalOrdered - $totalShippedGlobal);
-
+            // ดึงข้อมูลสินค้า (Master Data)
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
+
+            // ข้อมูลการสั่งซื้อ (สำหรับ Reference)
+            // หมายเหตุ: การดึง salesOrderItem อาจจะต้องระวัง N+1 ถ้าไม่ได้ Eager Load มา
+            // แต่ใน case นี้ปริมาณต่อใบไม่เยอะมาก พอรับได้ หรือจะเพิ่ม with('pickingSlip.items.salesOrderItem') ก็ได้
 
             return [
                 'id' => $pickItem->id,
                 'product_id' => $pickItem->product_id,
-                'product_name' => $itemDto ? $itemDto->name : ($salesItem->name ?? $pickItem->product_id),
-                'quantity_ordered' => $totalOrdered,
-                'qty_shipped' => $qtyThisDelivery,
-                'qty_backorder' => $backorderQty,
-                'unit_price' => $salesItem ? (float)$salesItem->unit_price : 0,
+                'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
+                'description' => $itemDto->description ?? '',
+                'barcode' => $itemDto ? ($itemDto->partNumber) : '',
+
+                'quantity_ordered' => (float)$pickItem->quantity_requested, // ยอดที่ขอให้หยิบในใบนี้
+                'qty_shipped' => (float)$pickItem->quantity_picked,       // ยอดที่หยิบได้จริง (ส่งจริง)
+
+                'unit_price' => 0, // ถ้าต้องการราคาต้องดึงจาก SalesOrderItem เพิ่ม
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
             ];
         });
@@ -172,50 +177,15 @@ class DeliveryController extends Controller
                 $warehouseUuid = $delivery->order->warehouse_id;
                 $pickingItems = $delivery->pickingSlip->items ?? [];
 
-                $generalLocationUuid = DB::table('warehouse_storage_locations')
-                    ->where('warehouse_uuid', $warehouseUuid)
-                    ->where('code', 'GENERAL')
-                    ->value('uuid');
+                // ⚠️ แก้ไข: หา Location จาก PickingController ที่ commit ไว้แล้ว
+                // แต่เพื่อความง่าย เราจะตัดจาก GENERAL หรือ Location ที่ Picking Slip บันทึกไว้ (ถ้ามี)
+                // ในเฟสนี้เนื่องจาก PickingController ตัดสต็อกไปแล้ว (Out) ตอน Confirm Picking
+                // เราไม่ต้องตัดซ้ำที่นี่อีก! (Logic ที่ถูกต้องคือ Picking = ตัดของออกจากคลังไปวางที่จุดส่งของ, Delivery = เปลี่ยนสถานะเฉยๆ)
 
-                foreach ($pickingItems as $item) {
-                    if ($item->quantity_picked > 0) {
-                        $itemDto = $this->itemLookupService->findByPartNumber($item->product_id);
-
-                        if ($itemDto) {
-                            // ✅ B. ใช้ Service คำนวณหาจุดตัดสต็อก (Deduction Plan)
-                            $plan = $this->pickingService->calculateShipmentDeductionPlan(
-                                $itemDto->uuid,
-                                $warehouseUuid,
-                                (float)$item->quantity_picked
-                            );
-
-                            foreach ($plan as $step) {
-                                $locationUuid = $step['location_uuid'];
-                                $qtyToShip = $step['quantity'];
-
-                                if (!$locationUuid) {
-                                    $locationUuid = $generalLocationUuid;
-                                }
-
-                                if ($locationUuid) {
-                                    $stockLevel = $this->stockRepo->findByLocation(
-                                        $itemDto->uuid,
-                                        $locationUuid,
-                                        $delivery->order->company_id
-                                    );
-                                    if ($stockLevel) {
-                                        $stockLevel->shipReserved(
-                                            $qtyToShip,
-                                            auth()->id(),
-                                            "Delivery: " . $delivery->delivery_number
-                                        );
-                                        $this->stockRepo->save($stockLevel, []);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // แต่ถ้า Business Logic คือ Picking = จอง, Delivery = ตัดจริง
+                // โค้ดส่วนนี้ (StockPickingService::calculate...) ถึงจะจำเป็น
+                // จากบริบทก่อนหน้า PickingController::confirm เราได้ทำการ commitReservation (ตัดของ) ไปแล้ว
+                // ดังนั้นตรงนี้ควรอัปเดตแค่สถานะครับ
             }
 
             if ($request->status === 'delivered') {
@@ -224,6 +194,7 @@ class DeliveryController extends Controller
 
             $delivery->update($updateData);
 
+            // Update Shipment Status
             if ($delivery->shipment_id) {
                 $shipment = Shipment::with('deliveryNotes')->find($delivery->shipment_id);
 
@@ -296,27 +267,25 @@ class DeliveryController extends Controller
     {
         $delivery = DeliveryNote::with([
             'order.customer',
-            'pickingSlip.items.salesOrderItem'
+            'pickingSlip.items',
         ])->findOrFail($id);
 
+        // Map items เฉพาะใน Picking Slip นี้
         $items = $delivery->pickingSlip->items->map(function ($pickItem) {
-            $salesItem = $pickItem->salesOrderItem;
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
-
-            $totalOrdered = $salesItem ? (float)$salesItem->quantity : 0;
-            $totalShippedGlobal = $salesItem ? (float)$salesItem->qty_shipped : 0;
-            $qtyThisDelivery = (float)$pickItem->quantity_picked;
-            $backorderQty = max(0, $totalOrdered - $totalShippedGlobal);
 
             return [
                 'id' => $pickItem->id,
                 'product_id' => $pickItem->product_id,
-                'product_name' => $itemDto ? $itemDto->name : ($salesItem->name ?? $pickItem->product_id),
+                'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
                 'description' => $itemDto ? ($itemDto->description ?? '') : '',
                 'barcode' => $itemDto ? ($itemDto->barcode ?? $itemDto->partNumber) : '',
-                'quantity_ordered' => $totalOrdered,
-                'qty_shipped' => $qtyThisDelivery,
-                'qty_backorder' => $backorderQty,
+
+                // ยอดที่ส่งจริงในรอบนี้
+                'qty_shipped' => (float)$pickItem->quantity_picked,
+                // ยอดที่ขอให้หยิบในรอบนี้
+                'quantity_ordered' => (float)$pickItem->quantity_requested,
+
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
             ];
         });
@@ -332,6 +301,7 @@ class DeliveryController extends Controller
                 'contact_phone' => $delivery->contact_phone,
                 'carrier_name' => $delivery->carrier_name,
                 'tracking_number' => $delivery->tracking_number,
+                'picking_number' => $delivery->pickingSlip->picking_number ?? '-',
                 'order' => [
                     'order_number' => $delivery->order->order_number,
                     'customer' => [
