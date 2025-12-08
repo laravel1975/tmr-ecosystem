@@ -27,12 +27,17 @@ use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseM
 
 // ✅ Import Service Interface
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
+use TmrEcosystem\Stock\Application\Contracts\StockCheckServiceInterface;
 
 class OrderController extends Controller
 {
     // ✅ Inject Service
     public function __construct(
-        private ItemLookupServiceInterface $itemLookupService
+        private PlaceOrderUseCase $placeOrderUseCase,
+        private CancelOrderUseCase $cancelOrderUseCase,
+        private OrderRepositoryInterface $orderRepository,
+        private ItemLookupServiceInterface $itemLookupService,
+        private StockCheckServiceInterface $stockCheckService
     ) {}
 
     public function dashboard()
@@ -83,22 +88,40 @@ class OrderController extends Controller
         ]);
     }
 
-    // ✅ REFACTOR: ใช้ Service แทนการ Query DB โดยตรง
     private function getProductOptions(array $orderProductIds = [])
     {
-        // เรียก Service ค้นหาสินค้า (Service จะจัดการเรื่อง Join รูปภาพให้เอง)
-        // ส่ง $orderProductIds ไปเพื่อให้มัน include สินค้าที่เลือกแล้วมาด้วย
+        // 1. เรียก Service ค้นหาสินค้า
         $items = $this->itemLookupService->searchItems('', $orderProductIds);
 
-        // Map ข้อมูลส่งให้ Frontend
-        return collect($items)->map(fn($dto) => [
-            'id' => $dto->partNumber,
-            'uuid' => $dto->uuid,
-            'name' => "{$dto->name} ({$dto->partNumber})",
-            'price' => $dto->price,
-            'stock' => 100, // Mock (หรือเรียก Stock Service ถ้าต้องการ Real-time)
-            'image_url' => $dto->imageUrl // ✅ ส่งรูปไป Frontend
-        ])->values()->toArray();
+        // 2. ✅ [FIX] ดึง Warehouse ID จริงจาก DB (แทนการใช้ 'DEFAULT_WAREHOUSE')
+        // ถ้ามี User login ควรดึงจาก auth()->user()->warehouse_id
+        $defaultWarehouse = WarehouseModel::first();
+        $warehouseId = $defaultWarehouse ? $defaultWarehouse->uuid : 'DEFAULT_WAREHOUSE';
+
+        // 3. เตรียมข้อมูล Part Numbers สำหรับ Batch Query
+        $partNumbers = collect($items)->pluck('partNumber')->toArray();
+
+        // 4. ดึงข้อมูล Stock (Batch)
+        $stockMap = $this->stockCheckService->checkAvailabilityBatch(
+            $partNumbers,
+            $warehouseId // ✅ ส่ง ID จริงไป
+        );
+
+        return collect($items)
+            ->filter(fn($dto) => $dto->canSell ?? true)
+            ->map(fn($dto) => [
+                'id' => $dto->partNumber,
+                'uuid' => $dto->uuid,
+                'name' => "{$dto->name} ({$dto->partNumber})",
+                'price' => $dto->price,
+
+                // ✅ ดึงค่า Stock จาก Map
+                'stock' => $stockMap[$dto->partNumber] ?? 0,
+
+                'image_url' => $dto->imageUrl
+            ])
+            ->values()
+            ->toArray();
     }
 
     public function create()

@@ -45,8 +45,8 @@ class PurchaseOrderController extends Controller
             // Handle Special Sort Columns (เช่น การเรียงตามชื่อ Vendor)
             if ($sort === 'vendor_name') {
                 $query->join('vendors', 'purchase_orders.vendor_id', '=', 'vendors.id')
-                      ->orderBy('vendors.name', $direction)
-                      ->select('purchase_orders.*'); // ต้อง Select กลับมาที่ PO เพื่อป้องกัน ID ชนกัน
+                    ->orderBy('vendors.name', $direction)
+                    ->select('purchase_orders.*'); // ต้อง Select กลับมาที่ PO เพื่อป้องกัน ID ชนกัน
             } else {
                 // Default Sort
                 $query->orderBy($sort, $direction);
@@ -85,6 +85,7 @@ class PurchaseOrderController extends Controller
             'order' => $order,
         ]);
     }
+
     public function create()
     {
         return Inertia::render('Purchase/Orders/Create', [
@@ -93,6 +94,7 @@ class PurchaseOrderController extends Controller
             // --- แก้ไขตรงนี้ ---
             // เปลี่ยนจาก 'price' เป็น 'average_cost as price'
             'products' => Item::select('uuid as id', 'name', 'part_number', 'average_cost as price')
+                ->where('can_purchase', true) // <--- เพิ่มเงื่อนไขนี้
                 ->orderBy('name')
                 ->get(),
             // ------------------
