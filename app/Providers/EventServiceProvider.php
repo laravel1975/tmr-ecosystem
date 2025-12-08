@@ -12,10 +12,12 @@ use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Event;
 use TmrEcosystem\HRM\Domain\Events\EmployeeRateUpdated;
+use TmrEcosystem\Logistics\Application\Listeners\CreateLogisticsDocuments;
 use TmrEcosystem\Maintenance\Application\Listeners\SyncStockToLegacySparePart;
 use TmrEcosystem\Maintenance\Application\Listeners\UpdateMaintenanceTechnicianData;
+use TmrEcosystem\Manufacturing\Application\Listeners\CreateProductionOrderFromSales;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
-use TmrEcosystem\Stock\Application\Listeners\ReserveStockOnOrderConfirmed;
+// use TmrEcosystem\Stock\Application\Listeners\ReserveStockOnOrderConfirmed;
 use TmrEcosystem\Stock\Domain\Events\StockLevelUpdated;
 
 class EventServiceProvider extends ServiceProvider
@@ -45,8 +47,17 @@ class EventServiceProvider extends ServiceProvider
         Failed::class => [
             UserActivityListener::class,
         ],
+
+
         OrderConfirmed::class => [
-            ReserveStockOnOrderConfirmed::class,
+           // ❌ [ปิดตัวเก่า] ตัวนี้แย่งจองของ ทำให้ Logistics มองไม่เห็นของ
+            // ReserveStockOnOrderConfirmed::class,
+
+            // ✅ [ใช้ตัวใหม่] ตัวนี้ทำทั้ง "จองของ" และ "ออกใบหยิบ" ใน Transaction เดียวกัน
+            CreateLogisticsDocuments::class,
+
+            // ✅ [Manufacturing] ทำงานต่อท้าย เพื่อเช็คว่าถ้าของไม่พอ ให้เปิดใบผลิต
+            CreateProductionOrderFromSales::class,
         ],
 
         /**

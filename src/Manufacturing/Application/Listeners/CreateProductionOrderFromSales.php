@@ -15,7 +15,6 @@ class CreateProductionOrderFromSales implements ShouldQueue
 {
     public function __construct(
         protected CreateProductionOrderUseCase $createProductionOrderUseCase,
-        // ✅ [เพิ่ม] Inject Stock Service เพื่อเช็คของก่อนสั่งผลิต
         protected StockCheckServiceInterface $stockCheckService
     ) {}
 
