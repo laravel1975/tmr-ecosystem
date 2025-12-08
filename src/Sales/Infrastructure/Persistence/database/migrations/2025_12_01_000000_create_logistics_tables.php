@@ -11,6 +11,7 @@ return new class extends Migration
         // 1. ใบหยิบสินค้า (Picking Slip) - ใช้ในคลัง
         Schema::create('sales_picking_slips', function (Blueprint $table) {
             $table->uuid('id')->primary();
+            $table->foreignId('company_id')->constrained('companies');
             $table->string('picking_number')->unique(); // e.g., PK-202511-001
             $table->foreignUuid('order_id')->constrained('sales_orders')->cascadeOnDelete();
 

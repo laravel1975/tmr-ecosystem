@@ -11,6 +11,7 @@ class PurchaseSeeder extends Seeder
     {
         if (Vendor::count() === 0) {
             Vendor::create([
+                'uuid' => '1',
                 'code' => 'VEN-001',
                 'name' => 'Acme Supplies Co., Ltd.',
                 'tax_id' => '1234567890123',
@@ -22,6 +23,7 @@ class PurchaseSeeder extends Seeder
             ]);
 
              Vendor::create([
+                'uuid' => '2',
                 'code' => 'VEN-002',
                 'name' => 'Global Parts Inc.',
                 'tax_id' => '9876543210987',
