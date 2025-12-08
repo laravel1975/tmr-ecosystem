@@ -239,7 +239,25 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                             </Tooltip>
                                         </TooltipProvider>
 
-                                        {!isConfirmed && <TooltipProvider><Tooltip><TooltipTrigger asChild><Button size={"icon"} className="bg-purple-700 hover:bg-purple-800 text-white ml-1" onClick={() => handleSubmit('confirm')} disabled={isSubmitting}><FileCheck className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Confirm Order</p></TooltipContent></Tooltip></TooltipProvider>}
+                                        {!isConfirmed &&
+                                            <TooltipProvider>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            size={"icon"}
+                                                            className="bg-purple-700 hover:bg-purple-800 text-white ml-1"
+                                                            onClick={() => handleSubmit('confirm')}
+                                                            disabled={isSubmitting}
+                                                        >
+                                                            <FileCheck className="h-4 w-4" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        <p>Confirm Order</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
+                                        }
                                     </>
                                 )}
                             </>

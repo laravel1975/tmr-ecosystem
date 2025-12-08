@@ -10,12 +10,12 @@ use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Stock\Infrastructure\Persistence\Eloquent\Repositories\EloquentStockLevelRepository;
 
 // Event
-use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
+// use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
 use TmrEcosystem\Stock\Application\Contracts\StockCheckServiceInterface;
 use TmrEcosystem\Stock\Application\Listeners\ReleaseStockOnOrderCancelled;
 // Listener
-use TmrEcosystem\Stock\Application\Listeners\ReserveStockOnOrderConfirmed;
+// use TmrEcosystem\Stock\Application\Listeners\ReserveStockOnOrderConfirmed;
 use TmrEcosystem\Stock\Application\Listeners\SyncStockOnOrderUpdated;
 use TmrEcosystem\Stock\Application\Services\StockCheckService;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
@@ -48,10 +48,10 @@ class StockServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // 1. Confirm
-        Event::listen(
-            OrderConfirmed::class,
-            ReserveStockOnOrderConfirmed::class
-        );
+        // Event::listen(
+        //     OrderConfirmed::class,
+        //     ReserveStockOnOrderConfirmed::class
+        // );
 
         // 2. Update
         Event::listen(
