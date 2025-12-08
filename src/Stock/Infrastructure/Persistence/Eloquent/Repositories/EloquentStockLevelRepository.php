@@ -153,4 +153,19 @@ class EloquentStockLevelRepository implements StockLevelRepositoryInterface
 
         return $models->map(fn($model) => \TmrEcosystem\Stock\Infrastructure\Persistence\Eloquent\StockLevelMapper::toDomain($model));
     }
+
+    /**
+     * ✅ [เพิ่มใหม่] ค้นหา StockLevel ที่มี Soft Reserve > 0 เพื่อทำการคืนของ
+     */
+    public function findWithSoftReserve(string $itemUuid, string $warehouseUuid): iterable
+    {
+        $models = StockLevelModel::query()
+            ->where('item_uuid', $itemUuid)
+            ->where('warehouse_uuid', $warehouseUuid)
+            ->where('quantity_soft_reserved', '>', 0) // หาเฉพาะที่มียอดจองค้าง
+            ->get();
+
+        // แปลงจาก Eloquent Model กลับเป็น Domain Aggregate
+        return $models->map(fn($model) => StockLevelMapper::toDomain($model));
+    }
 }

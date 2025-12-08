@@ -17,9 +17,11 @@ use TmrEcosystem\Stock\Domain\Events\StockLevelUpdated;
 
 // Listeners
 use TmrEcosystem\Logistics\Application\Listeners\CreateLogisticsDocuments;
+use TmrEcosystem\Logistics\Application\Listeners\SyncLogisticsDocuments;
 use TmrEcosystem\Maintenance\Application\Listeners\SyncStockToLegacySparePart;
 use TmrEcosystem\Maintenance\Application\Listeners\UpdateMaintenanceTechnicianData;
 use TmrEcosystem\Manufacturing\Application\Listeners\CreateProductionOrderFromSales;
+use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -53,6 +55,10 @@ class EventServiceProvider extends ServiceProvider
         OrderConfirmed::class => [
             CreateLogisticsDocuments::class,
             CreateProductionOrderFromSales::class,
+        ],
+
+        OrderUpdated::class => [
+            SyncLogisticsDocuments::class,
         ],
 
         /**

@@ -10,78 +10,153 @@ use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
+use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
+
+// Services
+use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
+use TmrEcosystem\Stock\Application\Services\StockPickingService;
+use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
+use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
 
 class SyncLogisticsDocuments implements ShouldQueue
 {
     use InteractsWithQueue;
 
+    public function __construct(
+        private StockLevelRepositoryInterface $stockRepo,
+        private ItemLookupServiceInterface $itemLookupService,
+        private StockPickingService $pickingService
+    ) {}
+
     public function handle(OrderUpdated $event): void
     {
-        $order = $event->order;
-        $orderId = $order->getId();
+        $orderAggregate = $event->order;
+        Log::info("Logistics: Syncing documents for Updated Order: {$orderAggregate->getOrderNumber()}");
 
-        Log::info("Logistics: Syncing documents for Updated Order: {$order->getOrderNumber()}");
+        $orderModel = SalesOrderModel::where('id', $orderAggregate->getId())->first();
+        if (!$orderModel) return;
 
-        DB::transaction(function () use ($order, $orderId) {
+        DB::transaction(function () use ($orderModel, $orderAggregate) {
+            $warehouseId = $orderModel->warehouse_id ?? 'DEFAULT_WAREHOUSE';
+            $companyId = $orderModel->company_id;
 
-            // 1. จัดการใบหยิบสินค้า (Picking Slip)
+            // 1. ค้นหา Picking Slip ที่ยังแก้ไขได้ (รวม 'ready', 'partial' ด้วย!)
             $picking = PickingSlip::with('items')
-                ->where('order_id', $orderId)
-                ->whereIn('status', ['pending', 'assigned']) // แก้ไขได้เฉพาะสถานะนี้
+                ->where('order_id', $orderModel->id)
+                ->whereIn('status', ['ready', 'partial', 'pending', 'assigned'])
+                ->orderBy('created_at', 'desc') // เอาใบจองล่าสุด
                 ->first();
 
             if ($picking) {
-                // === เริ่ม Logic การอัปเดต Items ===
+                // === STEP A: คืนสต็อกเก่า (Rollback Reservation) ===
+                foreach ($picking->items as $oldItem) {
+                    $inventoryItem = $this->itemLookupService->findByPartNumber($oldItem->product_id);
+                    if ($inventoryItem && $oldItem->quantity_requested > 0) {
+                        // เนื่องจากเราไม่ได้เก็บ Location ไว้ใน PickingItem (ในเวอร์ชั่นก่อน)
+                        // เราต้องพยายามคืน โดยหาว่าจองไว้ที่ไหน (Best Effort)
+                        // หรือถ้าในอนาคตเก็บ location_id ให้ใช้ตรงนี้
 
-                // ลบ Items เดิมออกทั้งหมด (เพื่อความง่ายในการ Sync)
-                // หรือจะใช้ Logic เปรียบเทียบเพื่อ Update/Insert/Delete ก็ได้
-                // แต่การลบแล้วสร้างใหม่ (Delete-Insert) ง่ายกว่าในกรณีนี้
+                        // วิธีแก้ขัด: คืนเข้า General หรือ ค้นหา StockLevel ที่มี Soft Reserve
+                        $stocks = $this->stockRepo->findWithSoftReserve($inventoryItem->uuid, $warehouseId);
+
+                        $qtyToRelease = $oldItem->quantity_requested;
+                        foreach ($stocks as $stock) {
+                            if ($qtyToRelease <= 0) break;
+                            $releaseAmount = min($qtyToRelease, $stock->getQuantitySoftReserved());
+
+                            $stock->releaseSoftReservation($releaseAmount);
+                            $this->stockRepo->save($stock, []);
+
+                            $qtyToRelease -= $releaseAmount;
+                        }
+                        Log::info("Stock: Released {$oldItem->quantity_requested} for {$oldItem->product_id}");
+                    }
+                }
+
+                // === STEP B: ลบรายการเก่า ===
                 $picking->items()->delete();
 
-                // สร้าง Items ใหม่จาก Order
-                foreach ($order->getItems() as $item) {
-                    $line = new PickingSlipItem();
-                    $line->picking_slip_id = $picking->id;
+                // === STEP C: คำนวณและจองใหม่ (Re-Allocate) ===
+                $hasShortage = false;
 
-                    // หา Sales Order Item ID ใหม่
-                    $salesOrderItemId = DB::table('sales_order_items')
-                        ->where('order_id', $orderId)
-                        ->where('product_id', $item->productId)
-                        ->value('id');
+                foreach ($orderAggregate->getItems() as $item) {
+                    $inventoryItem = $this->itemLookupService->findByPartNumber($item->productId);
+                    if (!$inventoryItem) continue;
 
-                    $line->sales_order_item_id = $salesOrderItemId;
-                    $line->product_id = $item->productId;
-                    $line->quantity_requested = $item->quantity;
-                    $line->quantity_picked = 0; // Reset ยอดที่หยิบ (เพราะรายการเปลี่ยน)
+                    // คำนวณแผนการหยิบใหม่
+                    $plan = $this->pickingService->calculatePickingPlan(
+                        $inventoryItem->uuid,
+                        $warehouseId,
+                        (float) $item->quantity
+                    );
 
-                    $line->save();
+                    $qtyAllocated = 0;
+
+                    foreach ($plan as $step) {
+                        $locationUuid = $step['location_uuid'];
+                        $qtyToPick = $step['quantity'];
+
+                        if (!$locationUuid) {
+                            $hasShortage = true;
+                            continue;
+                        }
+
+                        try {
+                            $stockLevel = $this->stockRepo->findByLocation(
+                                $inventoryItem->uuid, $locationUuid, $companyId
+                            );
+
+                            if ($stockLevel) {
+                                $stockLevel->reserveSoft($qtyToPick); // จองใหม่
+                                $this->stockRepo->save($stockLevel, []);
+                                $qtyAllocated += $qtyToPick;
+
+                                // สร้าง Item ใหม่
+                                $line = new PickingSlipItem();
+                                $line->picking_slip_id = $picking->id;
+                                $line->sales_order_item_id = $this->findSalesOrderItemId($orderModel->id, $item->productId);
+                                $line->product_id = $item->productId;
+                                $line->quantity_requested = $qtyToPick;
+                                $line->quantity_picked = 0;
+                                $line->save();
+                            }
+                        } catch (InsufficientStockException $e) {
+                            $hasShortage = true;
+                        }
+                    }
+
+                    if ($qtyAllocated < $item->quantity) $hasShortage = true;
                 }
-                // === จบ Logic การอัปเดต Items ===
 
-                // รีเซ็ตสถานะ Picking Slip (เผื่อมีการ Assign ไปแล้ว)
+                // อัปเดตสถานะ Picking Slip และ Order
                 $picking->update([
-                    'status' => 'pending',
-                    'note' => trim($picking->note . "\n[System] Order Updated: รายการสินค้าเปลี่ยนแปลง กรุณาตรวจสอบใหม่"),
-                    'picker_user_id' => null,
+                    'status' => $hasShortage ? 'partial' : 'ready',
+                    'note' => trim($picking->note . "\n[System] Updated: รายการเปลี่ยนแปลงเมื่อ " . now()),
                 ]);
 
-                Log::info("Logistics: Updated Picking Slip {$picking->picking_number}");
+                $orderModel->update([
+                    'stock_status' => $hasShortage ? 'backorder' : 'reserved'
+                ]);
+
+                Log::info("Logistics: Successfully synced Picking Slip {$picking->picking_number}");
+
             } else {
-                 Log::warning("Logistics: No editable Picking Slip found for Order {$order->getOrderNumber()}");
+                 Log::warning("Logistics: No editable Picking Slip found for Updated Order {$orderAggregate->getOrderNumber()}");
             }
 
-            // 2. จัดการใบส่งของ (Delivery Note)
-            $delivery = DeliveryNote::where('order_id', $orderId)->first();
-
-            if ($delivery) {
-                // ถอยสถานะกลับมารอ Operation
-                if (!in_array($delivery->status, ['shipped', 'delivered'])) {
-                    $delivery->update([
-                        'status' => 'wait_operation'
-                    ]);
-                    Log::info("Logistics: Reset Delivery Note {$delivery->delivery_number} status");
-                }
+            // 2. Reset Delivery Note ถ้ามี
+            $delivery = DeliveryNote::where('order_id', $orderModel->id)->first();
+            if ($delivery && !in_array($delivery->status, ['shipped', 'delivered'])) {
+                $delivery->update(['status' => 'wait_operation']);
             }
         });
+    }
+
+    private function findSalesOrderItemId($orderId, $productId)
+    {
+        return DB::table('sales_order_items')
+            ->where('order_id', $orderId)
+            ->where('product_id', $productId)
+            ->value('id');
     }
 }
