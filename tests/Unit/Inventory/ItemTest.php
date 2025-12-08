@@ -5,8 +5,8 @@ namespace Tests\Unit\Inventory;
 use PHPUnit\Framework\TestCase;
 use TmrEcosystem\Inventory\Domain\Aggregates\Item;
 use TmrEcosystem\Inventory\Domain\ValueObjects\ItemCode;
-use TmrEcosystem\Inventory\Domain\ValueObjects\Money;
 use InvalidArgumentException;
+use TmrEcosystem\Shared\Domain\ValueObjects\Money;
 
 class ItemTest extends TestCase
 {

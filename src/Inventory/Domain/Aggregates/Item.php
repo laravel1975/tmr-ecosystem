@@ -3,7 +3,7 @@
 namespace TmrEcosystem\Inventory\Domain\Aggregates;
 
 use TmrEcosystem\Inventory\Domain\ValueObjects\ItemCode;
-use TmrEcosystem\Inventory\Domain\ValueObjects\Money;
+use TmrEcosystem\Shared\Domain\ValueObjects\Money;
 
 class Item
 {

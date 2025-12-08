@@ -28,6 +28,7 @@ return new class extends Migration
         // 2. ใบส่งของ (Delivery Note) - ใช้แปะหน้ากล่อง/ลูกค้าเซ็น
         Schema::create('sales_delivery_notes', function (Blueprint $table) {
             $table->uuid('id')->primary();
+            $table->foreignId('company_id')->constrained('companies');
             $table->string('delivery_number')->unique(); // e.g., DO-202511-001
             $table->foreignUuid('order_id')->constrained('sales_orders');
             $table->foreignUuid('picking_slip_id')->nullable(); // เชื่อมโยงว่ามาจากการหยิบครั้งไหน

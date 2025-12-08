@@ -6,7 +6,7 @@ use TmrEcosystem\Inventory\Domain\Aggregates\Item as ItemAggregate;
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemModel;
 // ✅ Import Value Objects
 use TmrEcosystem\Inventory\Domain\ValueObjects\ItemCode;
-use TmrEcosystem\Inventory\Domain\ValueObjects\Money;
+use TmrEcosystem\Shared\Domain\ValueObjects\Money;
 
 class ItemMapper
 {

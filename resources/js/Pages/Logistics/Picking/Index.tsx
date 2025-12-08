@@ -282,7 +282,7 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                                                         {/* เรียกใช้ Function Badge โดยส่งทั้ง Object */}
                                                         <TableCell>{getStatusBadge(slip)}</TableCell>
                                                         <TableCell className="text-right pr-6">
-                                                            {slip.status === 'pending' && (
+                                                            {(slip.status === 'pending'||slip.status === 'ready') && (
                                                                 <Button
                                                                     size="sm"
                                                                     className="bg-amber-500 hover:bg-amber-600 text-white shadow-sm h-8"

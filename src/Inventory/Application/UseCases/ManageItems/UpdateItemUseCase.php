@@ -10,9 +10,9 @@ use TmrEcosystem\Inventory\Domain\Aggregates\Item;
 use TmrEcosystem\Inventory\Domain\Exceptions\PartNumberAlreadyExistsException;
 use TmrEcosystem\Inventory\Domain\Repositories\ItemRepositoryInterface;
 use TmrEcosystem\Inventory\Domain\ValueObjects\ItemCode;
-use TmrEcosystem\Inventory\Domain\ValueObjects\Money;
 // Models
 use TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Models\ItemImage;
+use TmrEcosystem\Shared\Domain\ValueObjects\Money;
 
 class UpdateItemUseCase
 {
