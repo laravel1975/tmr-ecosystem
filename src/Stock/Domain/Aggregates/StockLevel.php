@@ -247,4 +247,9 @@ class StockLevel
     {
         return $this->quantitySoftReserved;
     }
+    // ✅ [เพิ่มเมธอดนี้] เพื่อให้ Controller เรียกใช้ได้
+    public function getLocationUuid(): string
+    {
+        return $this->locationUuid;
+    }
 }

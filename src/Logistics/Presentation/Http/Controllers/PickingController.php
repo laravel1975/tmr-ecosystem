@@ -12,6 +12,7 @@ use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderItemModel;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
+use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
 
 class PickingController extends Controller
 {
@@ -21,7 +22,7 @@ class PickingController extends Controller
         private StockPickingService $pickingService
     ) {}
 
-    // ... (index, show methods เหมือนเดิม) ...
+    // ... (index method เหมือนเดิม) ...
     public function index(Request $request)
     {
         // (Code เดิม...)
@@ -83,33 +84,42 @@ class PickingController extends Controller
     public function show(string $id)
     {
         $pickingSlip = PickingSlip::with(['items', 'order.customer'])->findOrFail($id);
-        $warehouseUuid = $pickingSlip->order->warehouse_id ?? 'Main-WH';
 
-        // ตรวจสอบว่า Warehouse ID มีจริงไหม ถ้าไม่มีให้ไปดึงจาก Warehouse แรกของบริษัท
-        if ($warehouseUuid === 'Main-WH' || !$warehouseUuid) {
-            $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->order->company_id)->value('uuid');
+        // 1. ตรวจสอบ Warehouse
+        $warehouseUuid = $pickingSlip->order->warehouse_id ?? $pickingSlip->warehouse_id;
+        if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
+             // Fallback: หา Warehouse แรกของบริษัท
+             $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->company_id)->value('uuid');
         }
 
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
-
-            // ✅ [Smart Picking Logic] หาตำแหน่งที่ควรไปหยิบ
             $suggestions = [];
-            if ($itemDto && $pickingSlip->status !== 'done') {
-                $qtyNeeded = $pickItem->quantity_requested - $pickItem->quantity_picked;
-                if ($qtyNeeded > 0) {
-                    // เรียกเมธอดที่เราเพิ่งแก้ชื่อไป
-                    $suggestions = $this->pickingService->suggestPickingLocations(
-                        $itemDto->uuid,
-                        $warehouseUuid,
-                        $qtyNeeded
-                    );
+
+            // 2. ✅ [Smart Logic] ดึงข้อมูล "สินค้าถูกจองไว้ที่ไหน?" (Where is it reserved?)
+            if ($itemDto && $pickingSlip->status !== 'done' && $warehouseUuid) {
+                // เรียกใช้ Repo เพื่อหา Reservation จริงที่มีอยู่
+                $reservedStocks = $this->stockRepo->findWithSoftReserve($itemDto->uuid, $warehouseUuid);
+
+                foreach ($reservedStocks as $stock) {
+                    $locationCode = DB::table('warehouse_storage_locations')
+                        ->where('uuid', $stock->getLocationUuid())
+                        ->value('code');
+
+                    if ($stock->getQuantitySoftReserved() > 0) {
+                        $suggestions[] = [
+                            'location_uuid' => $stock->getLocationUuid(),
+                            'location_code' => $locationCode ?? 'UNKNOWN',
+                            'quantity' => $stock->getQuantitySoftReserved()
+                        ];
+                    }
                 }
             }
 
-            // ถ้าไม่มี Suggestion (เช่น ของหมด หรือ Picking Done) ให้ใส่ค่า Default ว่างๆ หรือดึงจาก History
-            // แต่เพื่อการแสดงผลใน PDF ที่สวยงาม เราอาจจะ Flatten Suggestion เป็น String
-            $locationString = collect($suggestions)->map(fn($s) => "{$s['location_code']} ({$s['quantity']})")->join(', ');
+            // Flatten location string for display (Support Legacy UI)
+            $locationString = collect($suggestions)
+                ->map(fn($s) => "{$s['location_code']} ({$s['quantity']})")
+                ->join(', ');
 
             return [
                 'id' => $pickItem->id,
@@ -124,7 +134,7 @@ class PickingController extends Controller
                 // ✅ ส่งข้อมูล Suggestion ไป Frontend
                 'picking_suggestions' => $suggestions,
                 // ✅ ส่ง String ไปเผื่อใช้แสดงผลง่ายๆ
-                'location_display' => $locationString ?: 'WAITING'
+                'location_display' => $locationString ?: 'WAITING STOCK'
             ];
         });
 
@@ -150,68 +160,86 @@ class PickingController extends Controller
         DB::transaction(function () use ($id, $request) {
             $picking = PickingSlip::with('items')->findOrFail($id);
             $submittedItems = collect($request->items);
-
             $backorderItems = [];
 
-            // Update Picking Items logic (เหมือนเดิม)
-            foreach ($submittedItems as $submitted) {
-                $pickItem = $picking->items->where('id', $submitted['id'])->first();
-                if ($pickItem) {
-                    $pickItem->update(['quantity_picked' => $submitted['qty_picked']]);
-                    $salesItem = SalesOrderItemModel::find($pickItem->sales_order_item_id);
-                    if ($salesItem) {
-                        $salesItem->increment('qty_shipped', $submitted['qty_picked']);
+            // หา Warehouse Context
+            $warehouseUuid = $picking->order->warehouse_id ?? $picking->warehouse_id;
+            if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
+                 $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $picking->company_id)->value('uuid');
+            }
+
+            foreach ($picking->items as $item) {
+                $submitted = $submittedItems->firstWhere('id', $item->id);
+                $qtyPickedActual = $submitted ? (float)$submitted['qty_picked'] : 0;
+
+                // --- ✅ FIX: เปลี่ยน Logic การตัดสต็อกให้รองรับ Location (Smart Commit) ---
+                if ($qtyPickedActual > 0) {
+                    $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
+
+                    if ($inventoryItemDto && $warehouseUuid) {
+                        // 1. ค้นหา Stock Level ที่มี Soft Reserve (ที่เราจองไว้ตอน CreateLogisticsDocuments)
+                        $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItemDto->uuid, $warehouseUuid);
+
+                        $qtyToCommit = $qtyPickedActual;
+
+                        foreach ($reservedStocks as $stockLevel) {
+                            if ($qtyToCommit <= 0) break;
+
+                            // ตัดสต็อกเท่าที่มีจองไว้ หรือเท่าที่หยิบจริง
+                            $amount = min($qtyToCommit, $stockLevel->getQuantitySoftReserved());
+
+                            if ($amount > 0) {
+                                // ฟังก์ชันนี้จะเปลี่ยน Soft Reserve -> Out (ลด On Hand)
+                                $stockLevel->commitReservation($amount);
+                                $this->stockRepo->save($stockLevel, []);
+                                $qtyToCommit -= $amount;
+                            }
+                        }
+
+                        // Note: ถ้า $qtyToCommit ยังเหลือ แสดงว่ามีการหยิบเกินที่จอง (Over-pick)
+                        // ในอนาคตอาจต้องเพิ่ม Logic ตัดจาก Available Stock ที่อื่นเพิ่ม
                     }
-                    $remaining = $pickItem->quantity_requested - $submitted['qty_picked'];
-                    if ($remaining > 0) {
-                        $backorderItems[] = [
-                            'sales_order_item_id' => $pickItem->sales_order_item_id,
-                            'product_id' => $pickItem->product_id,
-                            'quantity_requested' => $remaining,
-                            'quantity_picked' => 0
-                        ];
-                    }
+                }
+
+                // 2. Release Unused Reservation (คืนยอดจองส่วนเกิน ถ้าหยิบไม่ครบ)
+                $qtyUnpicked = $item->quantity_requested - $qtyPickedActual;
+                if ($qtyUnpicked > 0) {
+                     $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
+                     if ($inventoryItemDto && $warehouseUuid) {
+                        $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItemDto->uuid, $warehouseUuid);
+                        $releaseRemaining = $qtyUnpicked;
+                        foreach ($reservedStocks as $stockLevel) {
+                             if ($releaseRemaining <= 0) break;
+                             $releaseAmt = min($releaseRemaining, $stockLevel->getQuantitySoftReserved());
+                             $stockLevel->releaseSoftReservation($releaseAmt); // คืนยอดจองกลับเป็น OnHand ปกติ
+                             $this->stockRepo->save($stockLevel, []);
+                             $releaseRemaining -= $releaseAmt;
+                        }
+                     }
+                }
+                // -----------------------------------------------------------
+
+                // Update Picking Item Data
+                $item->update(['quantity_picked' => $qtyPickedActual]);
+
+                $salesItem = SalesOrderItemModel::find($item->sales_order_item_id);
+                if ($salesItem) {
+                    $salesItem->increment('qty_shipped', $qtyPickedActual);
+                }
+
+                $remaining = $item->quantity_requested - $qtyPickedActual;
+                if ($remaining > 0) {
+                    $backorderItems[] = [
+                        'sales_order_item_id' => $item->sales_order_item_id,
+                        'product_id' => $item->product_id,
+                        'quantity_requested' => $remaining,
+                        'quantity_picked' => 0
+                    ];
                 }
             }
 
             $picking->update(['status' => 'done', 'picked_at' => now()]);
             DeliveryNote::where('picking_slip_id', $id)->update(['status' => 'ready_to_ship']);
-
-            $picking->refresh();
-            $picking->load('items');
-
-            // --- ✅ FIX: เปลี่ยน Logic การตัดสต็อกให้รองรับ Location ---
-
-            // 1. หา Location UUID ของ 'GENERAL'
-            $warehouseUuid = $picking->warehouse_id ?? $picking->order->warehouse_id;
-            $locationUuid = DB::table('warehouse_storage_locations')
-                ->where('warehouse_uuid', $warehouseUuid)
-                ->where('code', 'GENERAL')
-                ->value('uuid');
-
-            // ถ้าเจอ Location GENERAL ให้ทำการตัดสต็อก (ถ้าไม่เจอ ข้ามไปก่อนได้เพื่อกัน Error แต่ควร Log ไว้)
-            if ($locationUuid) {
-                foreach ($picking->items as $item) {
-                    if ($item->quantity_picked > 0) {
-                        $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
-
-                        if ($inventoryItemDto) {
-                            // 2. ใช้ findByLocation แทน findByItemAndWarehouse
-                            $stockLevel = $this->stockRepo->findByLocation(
-                                $inventoryItemDto->uuid,
-                                $locationUuid, // ✅ เจาะจง GENERAL
-                                $picking->order->company_id
-                            );
-
-                            if ($stockLevel) {
-                                $stockLevel->commitReservation((float)$item->quantity_picked);
-                                $this->stockRepo->save($stockLevel, []);
-                            }
-                        }
-                    }
-                }
-            }
-            // -----------------------------------------------------------
 
             if (!empty($backorderItems) && $request->create_backorder) {
                 // (Logic Backorder เหมือนเดิม)
@@ -269,24 +297,29 @@ class PickingController extends Controller
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
 
-            // 2. ✅ [Smart Picking Logic] คำนวณหา Location ที่ควรไปหยิบ
+            // 2. ✅ [Smart Picking Logic] ใช้ Logic เดียวกับ show() เพื่อความ Consistent
             $suggestions = [];
-            if ($itemDto && $pickingSlip->status !== 'done') {
-                $qtyNeeded = $pickItem->quantity_requested - $pickItem->quantity_picked;
-                if ($qtyNeeded > 0) {
-                    // เรียก Service (ต้องแก้ชื่อเมธอดใน Service ให้ตรงกันด้วยนะครับ ตอนนี้ผมน่าจะแก้เป็น calculatePickingPlan แล้ว)
-                    $suggestions = $this->pickingService->calculatePickingPlan(
-                        $itemDto->uuid,
-                        $warehouseUuid,
-                        $qtyNeeded
-                    );
+            if ($itemDto && $pickingSlip->status !== 'done' && $warehouseUuid) {
+                 // ดึงจาก Reservation จริง
+                 $reservedStocks = $this->stockRepo->findWithSoftReserve($itemDto->uuid, $warehouseUuid);
+                 foreach ($reservedStocks as $stock) {
+                    $locationCode = DB::table('warehouse_storage_locations')
+                        ->where('uuid', $stock->getLocationUuid())
+                        ->value('code');
+
+                    if ($stock->getQuantitySoftReserved() > 0) {
+                        $suggestions[] = [
+                            'location_uuid' => $stock->getLocationUuid(),
+                            'location_code' => $locationCode ?? 'UNKNOWN',
+                            'quantity' => $stock->getQuantitySoftReserved()
+                        ];
+                    }
                 }
             }
 
             // 3. ✅ แปลง Suggestion เป็น String สำหรับแสดงผลในตาราง
-            // ตัวอย่าง: "A-1-1 (5), GENERAL (2)"
             $locationStr = collect($suggestions)
-                ->map(fn($s) => "{$s['location_code']}") // เอาแค่ Code ก็พอ หรือจะใส่ Qty ด้วยก็ได้
+                ->map(fn($s) => "{$s['location_code']}") // เอาแค่ Code ก็พอ
                 ->unique()
                 ->join(', ');
 
@@ -302,7 +335,7 @@ class PickingController extends Controller
 
                 'qty_ordered' => $pickItem->quantity_requested,
                 'qty_picked' => $pickItem->quantity_picked,
-                'is_completed' => false, // สำหรับหน้า Show ไม่ได้ใช้ Logic นี้มากนัก
+                'is_completed' => false,
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
             ];
         });

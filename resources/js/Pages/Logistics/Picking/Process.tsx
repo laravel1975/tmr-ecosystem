@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Head, Link, useForm, router } from '@inertiajs/react';
+import React, { useState, useCallback } from 'react';
+import { Head, Link, router } from '@inertiajs/react';
 import { PageProps } from '@/types';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 
@@ -15,9 +15,9 @@ import { cn } from '@/lib/utils';
 
 import { useBarcodeScanner } from '@/Hooks/useBarcodeScanner';
 
-// Types
+// Types (Updated for Smart Reservation)
 interface PickingSuggestion {
-    location_uuid: string | null;
+    location_uuid: string;
     location_code: string;
     quantity: number;
 }
@@ -31,7 +31,7 @@ interface PickingItem {
     qty_picked: number;
     is_completed: boolean;
     image_url?: string;
-    picking_suggestions: PickingSuggestion[];
+    picking_suggestions: PickingSuggestion[]; // แผนการหยิบจาก Smart Reserve
 }
 
 interface PickingSlip {
@@ -60,13 +60,12 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     const [lastScanned, setLastScanned] = useState<{ name: string, status: 'success' | 'error' } | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // --- Helper: คำนวณยอดที่หยิบได้จริงจากแผน (Available to Pick) ---
+    // --- Helper: คำนวณยอดที่หยิบได้จริง (Available to Pick) จาก Smart Reservation ---
     const getMaxPickable = (item: PickingItem) => {
-        if (!item.picking_suggestions) return 0;
-        // รวมยอดจากทุก Location ที่ไม่ใช่ Error
-        return item.picking_suggestions
-            .filter(s => s.location_code !== 'NOT_ENOUGH_STOCK')
-            .reduce((sum, s) => sum + s.quantity, 0);
+        if (!item.picking_suggestions || item.picking_suggestions.length === 0) return 0;
+
+        // รวมยอดจากทุก Location ที่ถูกจองไว้ให้
+        return item.picking_suggestions.reduce((sum, s) => sum + s.quantity, 0);
     };
 
     // --- 📡 BARCODE SCANNER LOGIC ---
@@ -78,11 +77,10 @@ export default function Process({ auth, pickingSlip, items }: Props) {
 
         if (targetItem) {
             const currentQty = pickedData[targetItem.id] || 0;
-            // ✅ Check against Max Pickable instead of Ordered
             const maxPickable = getMaxPickable(targetItem);
 
             if (currentQty >= maxPickable) {
-                setLastScanned({ name: `Full/Max Reached: ${targetItem.product_name}`, status: 'error' });
+                setLastScanned({ name: `Max Reached: ${targetItem.product_name}`, status: 'error' });
             } else {
                 setPickedData(prev => ({
                     ...prev,
@@ -103,7 +101,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     // Update Local State (Manual Input)
     const handleQtyChange = (itemId: number, val: string, maxLimit: number) => {
         const num = parseFloat(val);
-        // ✅ Limit value to maxPickable
+        // ✅ Limit value to maxPickable (Smart Reserve Limit)
         const safeNum = isNaN(num) ? 0 : Math.min(num, maxLimit);
 
         setPickedData(prev => ({
@@ -121,9 +119,13 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     };
 
     const handleSubmit = () => {
-        const isAllComplete = items.every(item => (pickedData[item.id] || 0) >= item.qty_ordered);
+        const isAllComplete = items.every(item => {
+             const max = getMaxPickable(item);
+             return (pickedData[item.id] || 0) >= max;
+        });
+
         const confirmMsg = isAllComplete
-            ? 'All items picked. Confirm to finish?'
+            ? 'All reserved items picked. Confirm to finish?'
             : 'Some items are missing/incomplete. Confirm partial picking?';
 
         if (!confirm(confirmMsg)) return;
@@ -202,11 +204,11 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                     {items.map((item) => {
                         const currentPicked = pickedData[item.id] || 0;
 
-                        // ✅ 1. คำนวณยอดที่หยิบได้จริง (ตาม Stock ที่มี)
+                        // ✅ 1. คำนวณยอดที่หยิบได้จริง (ตาม Stock ที่จองไว้)
                         const maxPickable = getMaxPickable(item);
                         const isStockEmpty = maxPickable === 0;
 
-                        const isFullyPicked = currentPicked >= item.qty_ordered;
+                        const isFullyPicked = currentPicked >= maxPickable && maxPickable > 0;
                         const isJustScanned = lastScanned?.name.includes(item.product_name) && lastScanned?.status === 'success';
 
                         return (
@@ -215,7 +217,8 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                 className={cn(
                                     "border-l-4 shadow-sm transition-all duration-300",
                                     isFullyPicked ? "border-l-green-500 bg-green-50/10" : "border-l-orange-400",
-                                    isJustScanned ? "ring-2 ring-green-500 scale-[1.02]" : ""
+                                    isJustScanned ? "ring-2 ring-green-500 scale-[1.02]" : "",
+                                    isStockEmpty && "opacity-75 bg-gray-50 border-l-gray-300"
                                 )}
                             >
                                 <CardContent className="p-6">
@@ -251,8 +254,10 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                     </div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <span className="block text-xs text-gray-500 uppercase font-bold">To Pick</span>
-                                                    <span className="text-2xl font-bold">{item.qty_ordered}</span>
+                                                    <span className="block text-xs text-gray-500 uppercase font-bold">Reserved</span>
+                                                    <span className={cn("text-2xl font-bold", isStockEmpty ? "text-red-500" : "text-gray-900")}>
+                                                        {maxPickable}
+                                                    </span>
                                                 </div>
                                             </div>
 
@@ -261,28 +266,23 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                             <div className="bg-slate-50 rounded-md p-3 border border-slate-200">
                                                 <div className="flex items-center gap-2 mb-2">
                                                     <MapPin className="w-4 h-4 text-blue-500" />
-                                                    <span className="text-sm font-bold text-gray-700">Walk Path (Suggested)</span>
+                                                    <span className="text-sm font-bold text-gray-700">Pick From (Reserved)</span>
                                                 </div>
 
                                                 {item.picking_suggestions && item.picking_suggestions.length > 0 ? (
                                                     <div className="flex flex-wrap gap-2">
                                                         {item.picking_suggestions.map((sug, idx) => (
-                                                            <div key={idx} className={cn(
-                                                                "flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-mono",
-                                                                sug.location_code === 'NOT_ENOUGH_STOCK'
-                                                                    ? "bg-red-100 border-red-200 text-red-700"
-                                                                    : "bg-white border-blue-200 text-blue-800 shadow-sm"
-                                                            )}>
+                                                            <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-mono bg-white border-blue-200 text-blue-800 shadow-sm">
                                                                 <span className="font-bold">{sug.location_code}</span>
-                                                                <Badge variant="secondary" className="h-5 px-1.5 bg-gray-200 text-gray-800">
+                                                                <Badge variant="secondary" className="h-5 px-1.5 bg-blue-100 text-blue-800 hover:bg-blue-200">
                                                                     x {sug.quantity}
                                                                 </Badge>
                                                             </div>
                                                         ))}
                                                     </div>
                                                 ) : (
-                                                    <p className="text-sm text-red-500 flex items-center">
-                                                        <AlertCircle className="w-4 h-4 mr-1" /> Stock data unavailable
+                                                    <p className="text-sm text-red-500 flex items-center italic">
+                                                        <AlertCircle className="w-4 h-4 mr-1" /> No stock reserved
                                                     </p>
                                                 )}
                                             </div>
@@ -296,7 +296,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                     <Input
                                                         type="number"
                                                         min="0"
-                                                        max={maxPickable} // ✅ 2. จำกัด Max ที่ยอดที่มีอยู่
+                                                        max={maxPickable} // ✅ 2. จำกัด Max ที่ยอดที่จองไว้
                                                         value={currentPicked}
                                                         onChange={(e) => handleQtyChange(item.id, e.target.value, maxPickable)}
                                                         className={cn(
@@ -304,7 +304,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                             isFullyPicked ? "text-green-600 border-green-500 bg-green-50 ring-2 ring-green-200" : "text-gray-800",
                                                             isStockEmpty ? "bg-gray-100 text-gray-400 cursor-not-allowed" : ""
                                                         )}
-                                                        disabled={pickingSlip.status === 'done' || isStockEmpty} // ✅ 3. Disable ถ้าไม่มีของ
+                                                        disabled={pickingSlip.status === 'done' || isStockEmpty}
                                                     />
                                                     {isJustScanned && (
                                                         <Zap className="absolute -right-8 w-6 h-6 text-yellow-500 animate-ping" />
@@ -312,19 +312,15 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                 </div>
                                             </div>
 
-                                            {pickingSlip.status !== 'done' && !isFullyPicked && (
+                                            {pickingSlip.status !== 'done' && !isFullyPicked && !isStockEmpty && (
                                                 <Button
-                                                    variant={isStockEmpty ? "outline" : "ghost"}
+                                                    variant="ghost"
                                                     size="sm"
-                                                    className={cn(
-                                                        "w-full",
-                                                        isStockEmpty ? "text-gray-400" : "text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                                    )}
+                                                    className="w-full text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                                                     onClick={() => handleAutoFill(item, maxPickable)}
-                                                    disabled={isStockEmpty} // ✅ 4. Disable ปุ่ม Pick All
                                                 >
                                                     <CheckCircle2 className="w-4 h-4 mr-1" />
-                                                    {isStockEmpty ? "No Stock" : "Pick All"}
+                                                    Pick All
                                                 </Button>
                                             )}
                                         </div>

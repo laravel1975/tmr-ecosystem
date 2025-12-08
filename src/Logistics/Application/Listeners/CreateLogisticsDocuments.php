@@ -123,7 +123,7 @@ class CreateLogisticsDocuments implements ShouldQueue
 
                 // ถ้า Picking Slip นี้ได้ของไม่ครบตามที่ขอในรอบนี้ ก็ถือเป็น Partial ของรอบนี้
                 // แต่ในมุมมอง 1:N เราถือว่าใบนี้ "Ready" ให้คนไปหยิบได้เลย
-                $pickingSlip->status = 'ready';
+                $pickingSlip->status = 'pending';
 
                 $pickingSlip->save();
 
