@@ -103,7 +103,8 @@ class ReturnNoteController extends Controller
 
         DB::transaction(function () use ($returnNote) {
             $order = $returnNote->order;
-            // เช็คว่าเป็น Internal Return (คืนยอดจอง) หรือ Customer Return (รับของเข้า)
+
+            // เช็คว่าเป็น Internal Return (คืนยอดจองภายใน) หรือ Customer Return (รับของเข้า)
             $isInternalReturn = str_contains($returnNote->reason, 'Cancel') ||
                 str_contains($returnNote->reason, 'Unload') ||
                 ($order && $order->status === 'cancelled');
@@ -229,7 +230,7 @@ class ReturnNoteController extends Controller
         // เตรียมข้อมูลรูปหลักฐาน (ถ้าต้องการแสดงในใบ Print)
         $evidences = $returnNote->evidenceImages->map(fn($e) => [
             'id' => $e->id,
-            'url' => $e->url // ใช้ Accessor getUrlAttribute
+            'url' => $e->url // ใช้ Accessor getUrlAttribute หรือ asset()
         ]);
 
         return Inertia::render('Logistics/ReturnNotes/Show', [

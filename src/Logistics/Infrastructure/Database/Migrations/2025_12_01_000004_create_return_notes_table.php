@@ -13,6 +13,11 @@ return new class extends Migration
             $table->string('return_number')->unique(); // RN-XXXXXX
             $table->foreignUuid('order_id')->nullable(); // อ้างอิง Order
             $table->foreignUuid('picking_slip_id')->nullable(); // อ้างอิงใบหยิบเดิม
+            // ✅ เพื่อผูกกับใบส่งของที่ถูกยกเลิก
+            $table->foreignUuid('delivery_note_id')
+                  ->nullable()
+                  ->constrained('sales_delivery_notes')
+                  ->onDelete('set null');
             $table->string('status')->default('pending'); // pending (รอนำเก็บ), completed (เก็บแล้ว)
             $table->text('reason')->nullable();
             $table->timestamps();

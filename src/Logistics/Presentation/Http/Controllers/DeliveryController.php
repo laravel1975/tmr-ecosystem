@@ -16,6 +16,8 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNoteItem;
 // ✅ Use Service
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteCancelled;
+use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteUpdated;
+use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 
 class DeliveryController extends Controller
@@ -218,6 +220,9 @@ class DeliveryController extends Controller
                     }
                 }
             }
+
+            // ✅ ส่ง Event บอกให้ระบบรู้ว่า Delivery Note มีการเปลี่ยนแปลง
+            DeliveryNoteUpdated::dispatch($delivery);
         });
 
         return to_route('logistics.delivery.index')
@@ -228,39 +233,58 @@ class DeliveryController extends Controller
     {
         $delivery = DeliveryNote::with(['pickingSlip.items'])->findOrFail($id);
 
-        if ($delivery->status !== 'ready_to_ship') {
-            return back()->with('error', 'ทำรายการได้เฉพาะสถานะ Ready to Ship เท่านั้น');
+        // Allow cancellation for 'ready_to_ship' or 'shipped' (returned mid-way)
+        if (!in_array($delivery->status, ['ready_to_ship', 'shipped'])) {
+            return back()->with('error', 'สถานะเอกสารไม่สามารถยกเลิกได้');
         }
 
         DB::transaction(function () use ($delivery) {
+            // 1. Mark Delivery as Cancelled
             $delivery->update([
                 'status' => 'cancelled',
-                'shipment_id' => null
+                'shipment_id' => null, // ปลดออกจากรถขนส่ง
+                'note' => $delivery->note . "\n[System] Cancelled & Returned"
             ]);
 
+            // 2. สร้าง Return Note (เพื่อรับของกลับเข้าคลัง)
             $returnNote = ReturnNote::create([
                 'return_number' => 'RN-' . date('Ymd') . '-' . rand(1000, 9999),
                 'order_id' => $delivery->order_id,
                 'picking_slip_id' => $delivery->picking_slip_id,
-                'status' => 'pending',
-                'reason' => 'Cancelled from Delivery (Ready to Ship)'
+                'delivery_note_id' => $delivery->id, // ผูกไว้หน่อยจะได้ตามรอยถูก
+                'status' => 'pending', // รอ QC ตรวจรับของคืน
+                'reason' => 'Delivery Cancelled / Failed Delivery'
             ]);
 
+            // 3. ✨ Logic สำคัญ: คืนยอด Shipped ใน Sales Order (เพื่อให้เปิดใบส่งใหม่ได้)
             foreach ($delivery->pickingSlip->items as $item) {
                 if ($item->quantity_picked > 0) {
+                    // 3.1 สร้างรายการใน Return Note
                     ReturnNoteItem::create([
                         'return_note_id' => $returnNote->id,
                         'product_id' => $item->product_id,
                         'quantity' => $item->quantity_picked
                     ]);
+
+                    // 3.2 🔴 ลดยอด Shipped ใน Sales Order กลับคืนมา!
+                    // เพื่อให้ Sales Order กลับสถานะเป็น "ค้างส่ง (Backorder/Partial)"
+                    DB::table('sales_order_items')
+                        ->where('id', $item->sales_order_item_id)
+                        ->decrement('qty_shipped', $item->quantity_picked);
                 }
             }
+
+            // 4. Update Sales Order Status กลับไปเป็น Confirmed หรือ Partially Shipped
+            // เพื่อให้ระบบรู้ว่าต้อง process ใหม่
+            $order = SalesOrderModel::find($delivery->order_id);
+            $order->update(['status' => 'partially_shipped']); // หรือ logic เช็คละเอียดอีกทีก็ได้
         });
 
-        DeliveryNoteCancelled::dispatch($delivery);
+        // Trigger Event เพื่อให้ Stock Module รู้ว่ามี Return Note มารอรับของเข้า
+        // DeliveryNoteCancelled::dispatch($delivery);
 
         return to_route('logistics.return-notes.index')
-            ->with('success', 'Delivery Cancelled. Please process the Return Note.');
+            ->with('success', 'Delivery Cancelled. Order items reverted. Return Note created.');
     }
 
     public function reViewItem(string $id)

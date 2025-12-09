@@ -50,4 +50,9 @@ class ReturnNote extends Model
     {
         return $this->hasMany(ReturnEvidence::class, 'return_note_id');
     }
+
+    public function deliveryNote()
+    {
+        return $this->belongsTo(DeliveryNote::class, 'delivery_note_id');
+    }
 }
