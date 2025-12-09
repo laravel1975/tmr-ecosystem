@@ -91,8 +91,6 @@ class User extends Authenticatable implements MustVerifyEmail
             ->setDescriptionForEvent(fn(string $eventName) => "User profile [{$this->email}] has been {$eventName}");
     }
 
-
-
     /**
      * Get the employee profile associated with the user.
      */
