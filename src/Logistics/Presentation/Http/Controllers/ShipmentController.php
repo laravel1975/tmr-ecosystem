@@ -244,8 +244,7 @@ class ShipmentController extends Controller
 
             if ($request->type === 'whole') {
                 $delivery->update(['shipment_id' => null]);
-            }
-            else {
+            } else {
                 $itemsToUnload = collect($request->items)->filter(fn($i) => $i['qty_unload'] > 0);
 
                 if ($itemsToUnload->isEmpty()) return;
@@ -253,7 +252,8 @@ class ShipmentController extends Controller
                 $originalPicking = $delivery->pickingSlip;
                 $newPicking = PickingSlip::create([
                     'picking_number' => $originalPicking->picking_number . '-SP' . rand(10, 99),
-                    'order_id' => $originalPicking->order_id,
+                    'company_id' => $delivery->pickingSlip->company_id,
+                    'order_id' => $delivery->order_id,
                     'status' => 'done',
                     'picker_user_id' => $originalPicking->picker_user_id,
                     'picked_at' => now(),
@@ -278,6 +278,7 @@ class ShipmentController extends Controller
 
                 DeliveryNote::create([
                     'delivery_number' => $delivery->delivery_number . '-SP' . rand(10, 99),
+                    'company_id' => $delivery->company_id,
                     'order_id' => $delivery->order_id,
                     'picking_slip_id' => $newPicking->id,
                     'shipping_address' => $delivery->shipping_address,

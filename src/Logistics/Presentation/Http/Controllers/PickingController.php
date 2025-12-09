@@ -245,6 +245,7 @@ class PickingController extends Controller
                 // (Logic Backorder เหมือนเดิม)
                 $newPicking = PickingSlip::create([
                     'picking_number' => 'PK-' . time() . '-BO',
+                    'company_id' => $picking->company_id,
                     'order_id' => $picking->order_id,
                     'status' => 'pending',
                     'note' => 'Backorder from ' . $picking->picking_number
@@ -252,6 +253,7 @@ class PickingController extends Controller
                 $newPicking->items()->createMany($backorderItems);
                 DeliveryNote::create([
                     'delivery_number' => 'DO-' . time() . '-BO',
+                    'company_id' => $picking->company_id,
                     'order_id' => $picking->order_id,
                     'picking_slip_id' => $newPicking->id,
                     'shipping_address' => 'Same as original',
