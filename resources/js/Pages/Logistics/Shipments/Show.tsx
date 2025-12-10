@@ -11,7 +11,7 @@ import { Label } from "@/Components/ui/label";
 import {
     ArrowLeft, Truck, User, Calendar, MapPin,
     Play, CheckCircle2, Printer, Package, XCircle, Phone,
-    AlertTriangle, Loader2, Map as MapIcon // ✅ เพิ่ม Icon
+    AlertTriangle, Loader2, Map as MapIcon
 } from "lucide-react";
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/Components/ui/tooltip';
@@ -57,18 +57,22 @@ interface Props {
 
 export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
 
-    // --- States (เดิม) ---
+    // --- States ---
     const [unloadModalOpen, setUnloadModalOpen] = useState(false);
     const [statusModalOpen, setStatusModalOpen] = useState(false);
     const [targetStatus, setTargetStatus] = useState<'shipped' | 'completed' | null>(null);
 
     const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
     const [unloadType, setUnloadType] = useState<'whole' | 'partial'>('whole');
+
+    // ✅ [เพิ่ม] State สำหรับเลือก Action ปลายทาง (Stock หรือ Return)
+    const [unloadAction, setUnloadAction] = useState<'stock' | 'return'>('stock');
+
     const [deliveryItems, setDeliveryItems] = useState<any[]>([]);
     const [isLoadingItems, setIsLoadingItems] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // --- Status Handlers (เดิม) ---
+    // --- Status Handlers ---
     const openStatusConfirm = (status: 'shipped' | 'completed') => {
         setTargetStatus(status);
         setStatusModalOpen(true);
@@ -107,10 +111,11 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
         }
     };
 
-    // --- Unload Handlers (เดิม) ---
+    // --- Unload Handlers ---
     const handleUnloadClick = (delivery: Delivery) => {
         setSelectedDelivery(delivery);
         setUnloadType('whole');
+        setUnloadAction('stock'); // Default Action
         setDeliveryItems([]);
         setUnloadModalOpen(true);
     };
@@ -138,12 +143,18 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
             const totalUnload = deliveryItems.reduce((acc, i) => acc + i.qty_unload, 0);
             if (totalUnload === 0) { alert("กรุณาระบุจำนวนสินค้า"); return; }
         }
-        if(!confirm("ยืนยันการเอาของลง?")) return;
+
+        const confirmMessage = unloadAction === 'return'
+            ? "⚠️ คำเตือน: สินค้าจะถูกส่งคืน (Return) และต้องผ่านขั้นตอน QC\nยืนยันการเอาของลง?"
+            : "ยืนยันการเอาของลงเพื่อรอจัดส่งรอบหน้า?";
+
+        if(!confirm(confirmMessage)) return;
 
         setIsSubmitting(true);
         router.post(route('logistics.shipments.unload', shipment.id), {
             delivery_note_id: selectedDelivery.id,
             type: unloadType,
+            target_action: unloadAction, // ✅ ส่ง target_action ไปด้วย
             items: deliveryItems
         }, {
             onSuccess: () => { setUnloadModalOpen(false); setIsSubmitting(false); },
@@ -151,25 +162,15 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
         });
     };
 
-    // ✅ [ใหม่] ฟังก์ชันสร้าง Link Google Maps
     const openGoogleMapsRoute = () => {
         if (deliveries.length === 0) return;
-
-        // จุดเริ่มต้น (บริษัท/คลังสินค้า - ควรดึงจาก Config จริงๆ)
         const origin = encodeURIComponent("บริษัท ทีเอ็มอาร์ อีโคซิสเต็ม จำกัด");
-
-        // จุดปลายทาง (จุดสุดท้ายในรายการ)
         const lastDelivery = deliveries[deliveries.length - 1];
         const destination = encodeURIComponent(lastDelivery.shipping_address);
-
-        // จุดแวะพัก (Waypoints) - เอาทุกจุดยกเว้นจุดสุดท้าย
         const waypoints = deliveries.slice(0, -1)
             .map(d => encodeURIComponent(d.shipping_address))
             .join('|');
-
-        // สร้าง URL Google Maps Directions
         const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&waypoints=${waypoints}&travelmode=driving`;
-
         window.open(url, '_blank');
     };
 
@@ -200,47 +201,34 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                     </div>
 
                     <div className="flex gap-2">
-                        {/* ✅ [ใหม่] ปุ่ม Smart Route (Google Maps) */}
                         {shipment.status !== 'completed' && deliveries.length > 0 && (
                             <Button variant="outline" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={openGoogleMapsRoute}>
                                 <MapIcon className="w-4 h-4" /> Route Map
                             </Button>
                         )}
-
-                        {/* ✅ [แก้ไข] ปุ่ม Print Manifest (ลิงก์ไป PDF Controller) */}
                         <Button variant="outline" className="gap-2" asChild>
                             <a href={route('logistics.shipments.manifest', shipment.id)} target="_blank">
                                 <Printer className="w-4 h-4" /> Print Manifest (PDF)
                             </a>
                         </Button>
-
-                        {/* ปุ่ม Status Actions (เดิม) */}
                         {shipment.status === 'planned' && (
-                            <Button
-                                className="bg-orange-600 hover:bg-orange-700 text-white gap-2 shadow-sm"
-                                onClick={() => openStatusConfirm('shipped')}
-                            >
+                            <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2 shadow-sm" onClick={() => openStatusConfirm('shipped')}>
                                 <Play className="w-4 h-4" /> Confirm Departure (ปล่อยรถ)
                             </Button>
                         )}
                         {shipment.status === 'shipped' && (
-                            <Button
-                                className="bg-green-600 hover:bg-green-700 text-white gap-2 shadow-sm"
-                                onClick={() => openStatusConfirm('completed')}
-                            >
+                            <Button className="bg-green-600 hover:bg-green-700 text-white gap-2 shadow-sm" onClick={() => openStatusConfirm('completed')}>
                                 <CheckCircle2 className="w-4 h-4" /> Close Trip (จบงาน)
                             </Button>
                         )}
                     </div>
                 </div>
 
-                {/* ✅ [ใหม่] Timeline Progress Bar */}
                 <div className="mt-2">
                     <ShipmentTimeline status={shipment.status} />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Left Column (Trip Info) - (คงเดิม) */}
                     <Card className="lg:col-span-1 h-fit border-indigo-100 shadow-sm">
                         <CardHeader className="bg-indigo-50/30 pb-4">
                             <CardTitle className="flex items-center gap-2 text-indigo-900">
@@ -271,12 +259,8 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                                     <Calendar className="w-4 h-4 text-gray-400" />
                                     <span>Plan: {shipment.planned_date}</span>
                                 </div>
-                                {shipment.departed_at && (
-                                    <div className="text-xs text-orange-600 mt-2 font-medium ml-6">Out: {shipment.departed_at}</div>
-                                )}
-                                {shipment.completed_at && (
-                                    <div className="text-xs text-green-600 mt-1 font-medium ml-6">In:   {shipment.completed_at}</div>
-                                )}
+                                {shipment.departed_at && <div className="text-xs text-orange-600 mt-2 font-medium ml-6">Out: {shipment.departed_at}</div>}
+                                {shipment.completed_at && <div className="text-xs text-green-600 mt-1 font-medium ml-6">In: {shipment.completed_at}</div>}
                             </div>
                             {shipment.note && (
                                 <div className="bg-yellow-50 p-3 rounded border border-yellow-100 text-sm mt-4 text-gray-700">
@@ -286,15 +270,12 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                         </CardContent>
                     </Card>
 
-                    {/* Right Column (Manifest) - (คงเดิม) */}
                     <Card className="lg:col-span-2 shadow-sm">
                         <CardHeader className="flex flex-row justify-between items-center bg-gray-50/50 border-b py-3">
                             <CardTitle className="flex items-center gap-2 text-gray-800">
                                 <Package className="w-5 h-5" /> Cargo Manifest
                             </CardTitle>
-                            <Badge variant="secondary" className="text-sm">
-                                {deliveries.length} Orders
-                            </Badge>
+                            <Badge variant="secondary" className="text-sm">{deliveries.length} Orders</Badge>
                         </CardHeader>
                         <CardContent className="p-0">
                             <Table>
@@ -327,17 +308,12 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                                                 <TableCell className="text-right">
                                                     <Badge variant="outline" className="bg-white">{dn.status}</Badge>
                                                 </TableCell>
-
                                                 {isEditable && (
                                                     <TableCell className="text-center">
                                                         <TooltipProvider>
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
-                                                                    <Button
-                                                                        variant="ghost" size="icon"
-                                                                        className="text-gray-400 hover:text-red-600 hover:bg-red-50"
-                                                                        onClick={() => handleUnloadClick(dn)}
-                                                                    >
+                                                                    <Button variant="ghost" size="icon" className="text-gray-400 hover:text-red-600 hover:bg-red-50" onClick={() => handleUnloadClick(dn)}>
                                                                         <XCircle className="w-5 h-5" />
                                                                     </Button>
                                                                 </TooltipTrigger>
@@ -382,7 +358,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                     </DialogContent>
                 </Dialog>
 
-                {/* Unload Modal (คงเดิม) */}
+                {/* Unload Modal (Updated with Action Selection) */}
                 <Dialog open={unloadModalOpen} onOpenChange={setUnloadModalOpen}>
                     <DialogContent className="sm:max-w-[600px]">
                         <DialogHeader>
@@ -396,20 +372,45 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                         </DialogHeader>
 
                         <div className="py-4 space-y-6">
-                            <RadioGroup value={unloadType} onValueChange={(v) => handleTypeChange(v as any)} className="flex gap-4">
-                                <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadType === 'whole' && "border-indigo-500 bg-indigo-50")}>
-                                    <RadioGroupItem value="whole" id="whole" />
-                                    <Label htmlFor="whole" className="cursor-pointer font-medium">เอาลงทั้งใบ (Whole)</Label>
-                                </div>
-                                <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadType === 'partial' && "border-indigo-500 bg-indigo-50")}>
-                                    <RadioGroupItem value="partial" id="partial" />
-                                    <Label htmlFor="partial" className="cursor-pointer font-medium">เอาลงบางส่วน (Partial)</Label>
-                                </div>
-                            </RadioGroup>
+                            {/* 1. Select Unload Type (Whole/Partial) */}
+                            <div className="space-y-3">
+                                <Label className="text-sm font-semibold text-gray-700">1. Select Unload Type</Label>
+                                <RadioGroup value={unloadType} onValueChange={(v) => handleTypeChange(v as any)} className="flex gap-4">
+                                    <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadType === 'whole' && "border-indigo-500 bg-indigo-50")}>
+                                        <RadioGroupItem value="whole" id="whole" />
+                                        <Label htmlFor="whole" className="cursor-pointer font-medium">เอาลงทั้งใบ (Whole)</Label>
+                                    </div>
+                                    <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadType === 'partial' && "border-indigo-500 bg-indigo-50")}>
+                                        <RadioGroupItem value="partial" id="partial" />
+                                        <Label htmlFor="partial" className="cursor-pointer font-medium">เอาลงบางส่วน (Partial)</Label>
+                                    </div>
+                                </RadioGroup>
+                            </div>
+
+                            {/* 2. Select Target Action (Stock/Return) */}
+                            <div className="space-y-3">
+                                <Label className="text-sm font-semibold text-gray-700">2. Select Target Action</Label>
+                                <RadioGroup value={unloadAction} onValueChange={(v) => setUnloadAction(v as any)} className="flex gap-4">
+                                    <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadAction === 'stock' && "border-blue-500 bg-blue-50")}>
+                                        <RadioGroupItem value="stock" id="act_stock" />
+                                        <div className="grid gap-1">
+                                            <Label htmlFor="act_stock" className="cursor-pointer font-medium">รอส่งรอบหน้า (Reschedule)</Label>
+                                            <p className="text-xs text-gray-500">เก็บไว้ในคลัง สถานะ Ready to Ship</p>
+                                        </div>
+                                    </div>
+                                    <div className={cn("flex items-center space-x-2 border p-3 rounded-md flex-1 cursor-pointer hover:bg-gray-50 transition-colors", unloadAction === 'return' && "border-red-500 bg-red-50")}>
+                                        <RadioGroupItem value="return" id="act_return" />
+                                        <div className="grid gap-1">
+                                            <Label htmlFor="act_return" className="cursor-pointer font-medium text-red-700">สินค้าเสียหาย/ยกเลิก (Return)</Label>
+                                            <p className="text-xs text-red-500">สร้าง Return Note และคืนยอด Sales Order</p>
+                                        </div>
+                                    </div>
+                                </RadioGroup>
+                            </div>
 
                             {/* Partial Items Table */}
                             {unloadType === 'partial' && (
-                                <div className="border rounded-md overflow-hidden bg-white">
+                                <div className="border rounded-md overflow-hidden bg-white mt-4">
                                     <div className="bg-gray-100 px-4 py-2 text-xs font-bold text-gray-500 uppercase">Select items to unload</div>
 
                                     {isLoadingItems ? (

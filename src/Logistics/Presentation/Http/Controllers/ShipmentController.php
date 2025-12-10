@@ -11,7 +11,9 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Shipment;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Vehicle;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
-use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem; // Use this
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNote;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNoteItem;
 
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
@@ -122,9 +124,6 @@ class ShipmentController extends Controller
         ]);
     }
 
-    /**
-     * อัปเดตสถานะ Shipment (ปล่อยรถ / จบงาน)
-     */
     public function updateStatus(Request $request, string $id)
     {
         $request->validate([
@@ -136,17 +135,13 @@ class ShipmentController extends Controller
         DB::transaction(function () use ($shipment, $request) {
             $newStatus = $request->status;
 
-            // 1. อัปเดตสถานะของ Shipment หลัก
             $shipment->update([
                 'status' => $newStatus,
                 'departed_at' => $newStatus === 'shipped' ? now() : $shipment->departed_at,
                 'completed_at' => $newStatus === 'completed' ? now() : $shipment->completed_at,
             ]);
 
-            // 2. วนลูปจัดการ Delivery Notes ในรถคันนั้น
             foreach ($shipment->deliveryNotes as $delivery) {
-
-                // --- กรณี: รถออกจากคลัง (Shipped) -> ตัดสต็อก ---
                 if ($newStatus === 'shipped' && $delivery->status !== 'shipped') {
                     $delivery->update([
                         'status' => 'shipped',
@@ -156,7 +151,6 @@ class ShipmentController extends Controller
                     $warehouseUuid = $delivery->order->warehouse_id;
                     $pickingItems = $delivery->pickingSlip->items ?? [];
 
-                    // เตรียม UUID ของ General Location ไว้กันเหนียว
                     $generalLocationUuid = DB::table('warehouse_storage_locations')
                         ->where('warehouse_uuid', $warehouseUuid)
                         ->where('code', 'GENERAL')
@@ -164,19 +158,15 @@ class ShipmentController extends Controller
 
                     foreach ($pickingItems as $item) {
                         if ($item->quantity_picked > 0) {
-
-                            // A. แปลง Product ID -> Item UUID
                             $itemDto = $this->itemLookupService->findByPartNumber($item->product_id);
 
                             if ($itemDto) {
-                                // B. ✅ ใช้ Service คำนวณหาจุดตัดสต็อก (Deduction Plan)
                                 $plan = $this->pickingService->calculateShipmentDeductionPlan(
                                     $itemDto->uuid,
                                     $warehouseUuid,
                                     (float)$item->quantity_picked
                                 );
 
-                                // C. วนลูปตัดของตามแผนที่ได้
                                 foreach ($plan as $step) {
                                     $locationUuid = $step['location_uuid'];
                                     $qtyToShip = $step['quantity'];
@@ -207,7 +197,6 @@ class ShipmentController extends Controller
                     }
                 }
 
-                // --- กรณี: จบงาน (Completed) -> เปลี่ยนสถานะเป็น Delivered ---
                 if ($newStatus === 'completed' && $delivery->status !== 'delivered') {
                     $delivery->update([
                         'status' => 'delivered',
@@ -232,7 +221,6 @@ class ShipmentController extends Controller
         return $this->updateStatus($request, $id);
     }
 
-    // ✅ [NEW] Remove Delivery from Shipment
     public function removeDelivery(Request $request, string $id)
     {
          $request->validate(['delivery_note_id' => 'required|exists:sales_delivery_notes,id']);
@@ -248,37 +236,56 @@ class ShipmentController extends Controller
          return back()->with('success', 'Delivery removed from shipment.');
     }
 
-    // ✅ [NEW] Unload Logic
+    // ✅ [MODIFIED] Unload Logic with Target Action (Stock vs Return)
     public function unload(Request $request, string $id)
     {
         $request->validate([
             'delivery_note_id' => 'required|exists:sales_delivery_notes,id',
             'type' => 'required|in:whole,partial',
-            'items' => 'required_if:type,partial|array'
+            'items' => 'required_if:type,partial|array',
+            'target_action' => 'nullable|in:stock,return'
         ]);
 
+        $targetAction = $request->target_action ?? 'stock';
         $shipment = Shipment::findOrFail($id);
 
         if ($shipment->status !== 'planned') {
             return back()->with('error', 'รถออกไปแล้ว ไม่สามารถเอาของลงได้');
         }
 
-        DB::transaction(function () use ($request, $id) {
+        // ✅ [FIXED] เพิ่ม $shipment เข้าไปใน use (...)
+        DB::transaction(function () use ($request, $id, $targetAction, $shipment) {
             $delivery = DeliveryNote::with('pickingSlip')->findOrFail($request->delivery_note_id);
 
+            // 1. กรณี Whole Unload (เอาลงทั้งใบ)
             if ($request->type === 'whole') {
-                $delivery->update(['shipment_id' => null]);
-            } else {
+                $delivery->update(['shipment_id' => null]); // ปลดออกจากรถ
+
+                // ถ้าเลือกเป็น Return -> ต้องยกเลิก DO นี้และสร้าง Return Note
+                if ($targetAction === 'return') {
+                     $delivery->update([
+                         'status' => 'cancelled',
+                         'note' => 'Unloaded as Damaged/Returned from ' . $shipment->shipment_number
+                     ]);
+
+                     // สร้าง Return Note
+                     $this->createReturnNoteFromDelivery($delivery, "Unload from Shipment {$shipment->shipment_number}");
+                }
+            }
+            // 2. กรณี Partial Unload (แบ่งของลง)
+            else {
                 $itemsToUnload = collect($request->items)->filter(fn($i) => $i['qty_unload'] > 0);
 
                 if ($itemsToUnload->isEmpty()) return;
 
                 $originalPicking = $delivery->pickingSlip;
+
+                // สร้าง Picking Slip ใบใหม่ (สำหรับของที่เอาลง)
                 $newPicking = PickingSlip::create([
                     'picking_number' => $originalPicking->picking_number . '-SP' . rand(10, 99),
-                    'company_id' => $delivery->pickingSlip->company_id, // Fix missing company_id
+                    'company_id' => $delivery->pickingSlip->company_id,
                     'order_id' => $delivery->order_id,
-                    'status' => 'done',
+                    'status' => 'done', // ของถูกหยิบแล้ว
                     'picker_user_id' => $originalPicking->picker_user_id,
                     'picked_at' => now(),
                     'note' => "Split/Unloaded from DO {$delivery->delivery_number}"
@@ -288,9 +295,11 @@ class ShipmentController extends Controller
                     $originalItem = PickingSlipItem::find($unloadItem['id']);
 
                     if ($originalItem) {
+                        // ลดจำนวนในใบเดิม
                         $originalItem->decrement('quantity_picked', $unloadItem['qty_unload']);
                         $originalItem->decrement('quantity_requested', $unloadItem['qty_unload']);
 
+                        // เพิ่มในใบใหม่
                         $newPicking->items()->create([
                             'sales_order_item_id' => $originalItem->sales_order_item_id,
                             'product_id' => $originalItem->product_id,
@@ -300,22 +309,59 @@ class ShipmentController extends Controller
                     }
                 }
 
-                DeliveryNote::create([
+                // สร้าง Delivery Note ใบใหม่
+                $newDeliveryStatus = ($targetAction === 'return') ? 'cancelled' : 'ready_to_ship';
+                $newDeliveryNote = ($targetAction === 'return') ? "Unloaded as Return (Damaged)" : null;
+
+                $newDelivery = DeliveryNote::create([
                     'delivery_number' => $delivery->delivery_number . '-SP' . rand(10, 99),
-                    'company_id' => $delivery->company_id, // Fix missing company_id
+                    'company_id' => $delivery->company_id,
                     'order_id' => $delivery->order_id,
                     'picking_slip_id' => $newPicking->id,
                     'shipping_address' => $delivery->shipping_address,
-                    'status' => 'ready_to_ship',
-                    'shipment_id' => null
+                    'status' => $newDeliveryStatus,
+                    'shipment_id' => null, // ไม่ได้อยู่บนรถคันนี้แล้ว
+                    'note' => $newDeliveryNote
                 ]);
+
+                // ถ้าเป็น Return -> สร้าง Return Note และคืนยอด SalesOrder
+                if ($targetAction === 'return') {
+                     $this->createReturnNoteFromDelivery($newDelivery, "Partial Unload (Damaged)");
+                }
             }
         });
 
         return back()->with('success', 'Unloaded successfully.');
     }
 
-    // ✅ [NEW] API for modal
+    // Helper: สร้าง Return Note และคืนยอด Sales Order
+    private function createReturnNoteFromDelivery(DeliveryNote $delivery, string $reason)
+    {
+        $returnNote = ReturnNote::create([
+            'return_number' => 'RN-' . date('Ymd') . '-' . rand(1000, 9999),
+            'order_id' => $delivery->order_id,
+            'picking_slip_id' => $delivery->picking_slip_id,
+            'delivery_note_id' => $delivery->id,
+            'status' => 'pending',
+            'reason' => $reason
+        ]);
+
+        foreach ($delivery->pickingSlip->items as $item) {
+            if ($item->quantity_picked > 0) {
+                ReturnNoteItem::create([
+                    'return_note_id' => $returnNote->id,
+                    'product_id' => $item->product_id,
+                    'quantity' => $item->quantity_picked
+                ]);
+
+                // 🔴 คืนยอด Shipped ใน SalesOrder
+                DB::table('sales_order_items')
+                    ->where('id', $item->sales_order_item_id)
+                    ->decrement('qty_shipped', $item->quantity_picked);
+            }
+        }
+    }
+
     public function getDeliveryItems(string $deliveryId)
     {
         $delivery = DeliveryNote::with('pickingSlip.items')->findOrFail($deliveryId);
