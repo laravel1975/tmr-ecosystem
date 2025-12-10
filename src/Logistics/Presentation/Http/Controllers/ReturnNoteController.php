@@ -96,80 +96,122 @@ class ReturnNoteController extends Controller
             return back()->with('error', 'เอกสารนี้ถูกดำเนินการไปแล้ว');
         }
 
-        // ✅ STRICT VALIDATION: ต้องมีรูปภาพหลักฐานอย่างน้อย 1 รูป
+        // ✅ STRICT VALIDATION
         if ($returnNote->evidenceImages->count() === 0) {
             return back()->with('error', 'กรุณาอัปโหลดรูปภาพหลักฐานสภาพสินค้า (Evidence) อย่างน้อย 1 รูป ก่อนยืนยันการรับคืน');
         }
 
         DB::transaction(function () use ($returnNote) {
             $order = $returnNote->order;
+            $warehouseId = $order->warehouse_id;
+            $companyId = $order->company_id;
 
-            // เช็คว่าเป็น Internal Return (คืนยอดจองภายใน) หรือ Customer Return (รับของเข้า)
+            // ตรวจสอบว่าเป็น Internal Return (เช่น ของเสียจากการ Unload)
             $isInternalReturn = str_contains($returnNote->reason, 'Cancel') ||
                 str_contains($returnNote->reason, 'Unload') ||
                 ($order && $order->status === 'cancelled');
 
-            $warehouseId = $order->warehouse_id;
-            $companyId = $order->company_id;
+            // 1. กำหนด Location ปลายทาง (GENERAL หรือ SCRAP)
+            $targetLocationCode = 'GENERAL';
+            if (stripos($returnNote->reason, 'Damaged') !== false ||
+                stripos($returnNote->reason, 'เสีย') !== false ||
+                stripos($returnNote->reason, 'ชำรุด') !== false) {
+                $targetLocationCode = 'SCRAP';
+            }
 
-            // --- ✅ FIX: Logic รับคืนสต็อกเข้า GENERAL ---
+            // หา UUID ของ Location
+            $targetLocUuid = DB::table('warehouse_storage_locations')->where('warehouse_uuid', $warehouseId)->where('code', $targetLocationCode)->value('uuid');
+            $generalLocUuid = DB::table('warehouse_storage_locations')->where('warehouse_uuid', $warehouseId)->where('code', 'GENERAL')->value('uuid');
 
-            // 1. หา Location 'GENERAL'
-            $locationUuid = DB::table('warehouse_storage_locations')
-                ->where('warehouse_uuid', $warehouseId)
-                ->where('code', 'GENERAL')
-                ->value('uuid');
+            // Fallback: ถ้าหา SCRAP ไม่เจอ ให้ลง GENERAL
+            if (!$targetLocUuid) $targetLocUuid = $generalLocUuid;
 
-            if ($locationUuid) {
-                foreach ($returnNote->items as $returnItem) {
-                    $inventoryItemDto = $this->itemLookupService->findByPartNumber($returnItem->product_id);
+            foreach ($returnNote->items as $returnItem) {
+                $itemDto = $this->itemLookupService->findByPartNumber($returnItem->product_id);
+                if (!$itemDto) continue;
 
-                    if ($inventoryItemDto) {
-                        // 2. ค้นหา StockLevel ด้วย Location
-                        $stockLevel = $this->stockRepo->findByLocation(
-                            $inventoryItemDto->uuid,
-                            $locationUuid, // ✅ GENERAL
-                            $companyId
-                        );
+                // --- A. จัดการ STOCK (INVENTORY) ---
 
-                        // 3. ถ้าไม่มี Stock Level (กรณีของหมดเกลี้ยง หรือเป็นสินค้าใหม่) ต้องสร้างใหม่
-                        if (!$stockLevel && !$isInternalReturn) {
-                            $stockLevel = \TmrEcosystem\Stock\Domain\Aggregates\StockLevel::create(
-                                uuid: $this->stockRepo->nextUuid(),
-                                companyId: $companyId,
-                                itemUuid: $inventoryItemDto->uuid,
-                                warehouseUuid: $warehouseId,
-                                locationUuid: $locationUuid
+                // 1. เตรียม Stock Level ปลายทาง (Target) - รับของเข้า
+                // ✅ แก้ไข: ลบเงื่อนไข !$isInternalReturn ออก เพื่อให้สร้าง Stock ที่ SCRAP ได้เสมอ
+                $targetStock = $this->stockRepo->findByLocation($itemDto->uuid, $targetLocUuid, $companyId);
+                if (!$targetStock) {
+                    $targetStock = \TmrEcosystem\Stock\Domain\Aggregates\StockLevel::create(
+                        uuid: $this->stockRepo->nextUuid(),
+                        companyId: $companyId,
+                        itemUuid: $itemDto->uuid,
+                        warehouseUuid: $warehouseId,
+                        locationUuid: $targetLocUuid
+                    );
+                    $this->stockRepo->save($targetStock, []);
+                }
+
+                // รับของเข้าปลายทาง (เพิ่ม On Hand)
+                $targetStock->receive(
+                    (float)$returnItem->quantity,
+                    auth()->id(),
+                    "Return Confirmed: {$returnNote->return_number} to {$targetLocationCode}"
+                );
+                $this->stockRepo->save($targetStock, []);
+
+
+                // 2. จัดการ Stock ต้นทาง (Source) - กรณี Internal Return (Unload)
+                // ต้องไปตัด Hard Reserve ที่ค้างอยู่ออก (เสมือนว่าเบิกออกไปแล้ว แต่แทนที่จะไปหาลูกค้า ดันไปลงถัง Scrap แทน)
+                if ($isInternalReturn) {
+                    $sourceStock = $this->stockRepo->findByLocation($itemDto->uuid, $generalLocUuid, $companyId);
+
+                    if ($sourceStock) {
+                        // ✅ แก้ไข: ใช้ shipReserved เพื่อตัดทั้ง Reserved และ OnHand ออกจาก GENERAL
+                        // (เพราะเราย้าย OnHand ไปอยู่ที่ SCRAP/Target แล้วในขั้นตอนที่ 1)
+                        try {
+                            $sourceStock->shipReserved(
+                                (float)$returnItem->quantity,
+                                auth()->id(),
+                                "Internal Return Transfer to {$targetLocationCode}"
                             );
-                            $this->stockRepo->save($stockLevel, []);
-                        }
-
-                        if ($stockLevel) {
-                            if ($isInternalReturn) {
-                                // กรณี Internal Return (เช่น ยกเลิก Picking): ปลด Hard Reserve คืนเป็น Available
-                                $stockLevel->releaseHardReservation((float)$returnItem->quantity);
-                                \Illuminate\Support\Facades\Log::info("Stock: Released Hard Reserve for {$returnItem->product_id}");
-                            } else {
-                                // กรณี Customer Return (ลูกค้าคืนของ): รับของเข้า (เพิ่ม On Hand)
-                                $stockLevel->receive(
-                                    (float)$returnItem->quantity,
-                                    auth()->id(),
-                                    "Restock from Return Note: {$returnNote->return_number}"
-                                );
-                                \Illuminate\Support\Facades\Log::info("Stock: Received Stock for {$returnItem->product_id}");
-                            }
-                            $this->stockRepo->save($stockLevel, []);
+                            $this->stockRepo->save($sourceStock, []);
+                        } catch (\Exception $e) {
+                            // กรณีตัด Reserve ไม่ผ่าน (เช่น Reserve หายไปแล้ว) ให้ข้ามไป ไม่ต้อง Crash
+                            \Illuminate\Support\Facades\Log::warning("Could not shipReserved for return: " . $e->getMessage());
                         }
                     }
                 }
-            }
-            // -----------------------------------------------------
 
+                // --- B. จัดการ SALES ORDER (คืนยอด Shipped) ---
+                // ✅ เพิ่ม: ตรวจสอบและคืนยอด Sales Order หากยังไม่ได้คืน
+                if ($returnItem->sales_order_item_id) { // ต้องมั่นใจว่าใน Table ReturnNoteItem มี column นี้ (หรือ Join เอา)
+                     // หมายเหตุ: ปกติ ReturnNoteItem อาจไม่มี sales_order_item_id เก็บไว้โดยตรง
+                     // ถ้าไม่มี ต้องไปหาจาก picking_slip_items หรือ order_items
+
+                     // Fallback: หาจาก Product ID ใน Order นี้
+                     $soItem = DB::table('sales_order_items')
+                        ->where('order_id', $order->id)
+                        ->where('product_id', $returnItem->product_id)
+                        ->first();
+
+                     if ($soItem) {
+                         // คืนยอด Shipped (เพื่อให้ Sale เปิดบิลส่งใหม่ได้)
+                         // ใช้ decrement เพื่อความปลอดภัย (ไม่ให้ต่ำกว่า 0)
+                         if ($soItem->qty_shipped > 0) {
+                             DB::table('sales_order_items')
+                                ->where('id', $soItem->id)
+                                ->decrement('qty_shipped', $returnItem->quantity);
+                         }
+                     }
+                }
+            }
+
+            // อัปเดตสถานะ Return Note
             $returnNote->update(['status' => 'completed']);
+
+            // อัปเดตสถานะ Sales Order (ถ้าจำเป็น)
+            if ($order->status === 'completed') {
+                $order->update(['status' => 'partially_shipped']); // ถอยสถานะกลับมา
+            }
         });
 
         return to_route('logistics.return-notes.index')
-            ->with('success', 'บันทึกการรับคืนสินค้าเรียบร้อยแล้ว (Stock Updated)');
+            ->with('success', 'บันทึกการรับคืนสินค้าเรียบร้อยแล้ว (Stock & Order Updated)');
     }
 
     public function uploadEvidence(Request $request, string $id)

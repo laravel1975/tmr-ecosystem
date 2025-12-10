@@ -29,9 +29,9 @@ class ShipmentController extends Controller
 
     public function index(Request $request)
     {
-        // ✅ [Modified] เพิ่ม whereHas('deliveryNotes') เพื่อกรอง Shipment เปล่าออก
         $query = Shipment::query()
             ->with(['vehicle', 'deliveryNotes.order.customer'])
+            // ✅ [Modified] กรอง Shipment ที่ไม่มี Delivery Note ออก
             ->whereHas('deliveryNotes');
 
         if ($request->search) {
@@ -236,10 +236,15 @@ class ShipmentController extends Controller
          $delivery = DeliveryNote::findOrFail($request->delivery_note_id);
          $delivery->update(['shipment_id' => null]);
 
+         // ✅ Check if shipment empty, delete it
+         if ($shipment->deliveryNotes()->count() === 0) {
+             $shipment->delete();
+             return to_route('logistics.shipments.index')->with('success', 'Shipment removed as it became empty.');
+         }
+
          return back()->with('success', 'Delivery removed from shipment.');
     }
 
-    // ✅ [MODIFIED] Unload Logic with Target Action (Stock vs Return)
     public function unload(Request $request, string $id)
     {
         $request->validate([
@@ -256,26 +261,21 @@ class ShipmentController extends Controller
             return back()->with('error', 'รถออกไปแล้ว ไม่สามารถเอาของลงได้');
         }
 
-        // ✅ [FIXED] เพิ่ม $shipment เข้าไปใน use (...)
         DB::transaction(function () use ($request, $id, $targetAction, $shipment) {
             $delivery = DeliveryNote::with('pickingSlip')->findOrFail($request->delivery_note_id);
 
-            // 1. กรณี Whole Unload (เอาลงทั้งใบ)
             if ($request->type === 'whole') {
-                $delivery->update(['shipment_id' => null]); // ปลดออกจากรถ
+                $delivery->update(['shipment_id' => null]);
 
-                // ถ้าเลือกเป็น Return -> ต้องยกเลิก DO นี้และสร้าง Return Note
                 if ($targetAction === 'return') {
                      $delivery->update([
                          'status' => 'cancelled',
                          'note' => 'Unloaded as Damaged/Returned from ' . $shipment->shipment_number
                      ]);
 
-                     // สร้าง Return Note
                      $this->createReturnNoteFromDelivery($delivery, "Unload from Shipment {$shipment->shipment_number}");
                 }
             }
-            // 2. กรณี Partial Unload (แบ่งของลง)
             else {
                 $itemsToUnload = collect($request->items)->filter(fn($i) => $i['qty_unload'] > 0);
 
@@ -283,12 +283,11 @@ class ShipmentController extends Controller
 
                 $originalPicking = $delivery->pickingSlip;
 
-                // สร้าง Picking Slip ใบใหม่ (สำหรับของที่เอาลง)
                 $newPicking = PickingSlip::create([
                     'picking_number' => $originalPicking->picking_number . '-SP' . rand(10, 99),
                     'company_id' => $delivery->pickingSlip->company_id,
                     'order_id' => $delivery->order_id,
-                    'status' => 'done', // ของถูกหยิบแล้ว
+                    'status' => 'done',
                     'picker_user_id' => $originalPicking->picker_user_id,
                     'picked_at' => now(),
                     'note' => "Split/Unloaded from DO {$delivery->delivery_number}"
@@ -298,11 +297,9 @@ class ShipmentController extends Controller
                     $originalItem = PickingSlipItem::find($unloadItem['id']);
 
                     if ($originalItem) {
-                        // ลดจำนวนในใบเดิม
                         $originalItem->decrement('quantity_picked', $unloadItem['qty_unload']);
                         $originalItem->decrement('quantity_requested', $unloadItem['qty_unload']);
 
-                        // เพิ่มในใบใหม่
                         $newPicking->items()->create([
                             'sales_order_item_id' => $originalItem->sales_order_item_id,
                             'product_id' => $originalItem->product_id,
@@ -312,7 +309,6 @@ class ShipmentController extends Controller
                     }
                 }
 
-                // สร้าง Delivery Note ใบใหม่
                 $newDeliveryStatus = ($targetAction === 'return') ? 'cancelled' : 'ready_to_ship';
                 $newDeliveryNote = ($targetAction === 'return') ? "Unloaded as Return (Damaged)" : null;
 
@@ -323,21 +319,29 @@ class ShipmentController extends Controller
                     'picking_slip_id' => $newPicking->id,
                     'shipping_address' => $delivery->shipping_address,
                     'status' => $newDeliveryStatus,
-                    'shipment_id' => null, // ไม่ได้อยู่บนรถคันนี้แล้ว
+                    'shipment_id' => null,
                     'note' => $newDeliveryNote
                 ]);
 
-                // ถ้าเป็น Return -> สร้าง Return Note และคืนยอด SalesOrder
                 if ($targetAction === 'return') {
                      $this->createReturnNoteFromDelivery($newDelivery, "Partial Unload (Damaged)");
                 }
             }
+
+            // ✅ Check if shipment empty, delete it
+            if ($shipment->refresh()->deliveryNotes()->count() === 0) {
+                 $shipment->delete();
+            }
         });
+
+        // ถ้า shipment ถูกลบไปแล้ว ให้ redirect กลับ index
+        if (!Shipment::find($id)) {
+             return to_route('logistics.shipments.index')->with('success', 'Shipment removed as it became empty.');
+        }
 
         return back()->with('success', 'Unloaded successfully.');
     }
 
-    // Helper: สร้าง Return Note และคืนยอด Sales Order
     private function createReturnNoteFromDelivery(DeliveryNote $delivery, string $reason)
     {
         $returnNote = ReturnNote::create([
@@ -357,7 +361,6 @@ class ShipmentController extends Controller
                     'quantity' => $item->quantity_picked
                 ]);
 
-                // 🔴 คืนยอด Shipped ใน SalesOrder
                 DB::table('sales_order_items')
                     ->where('id', $item->sales_order_item_id)
                     ->decrement('qty_shipped', $item->quantity_picked);

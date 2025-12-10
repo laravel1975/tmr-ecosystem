@@ -6,9 +6,9 @@ import { Input } from "@/Components/ui/input";
 import { Label } from "@/Components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/Components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/Components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/Components/ui/card";
 import { Textarea } from "@/Components/ui/textarea";
-import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, Printer, PackageX, FileText, Package } from "lucide-react";
+import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer, PackageX, FileText, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/Components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/Components/ui/popover";
@@ -25,6 +25,7 @@ import Breadcrumbs from '@/Components/Breadcrumbs';
 import SmartButton from '@/Components/SmartButton';
 import ProductCombobox from '@/Components/ProductCombobox';
 import ImageViewer from '@/Components/ImageViewer';
+import { Badge } from '@/Components/ui/badge';
 
 // --- Types ---
 interface Product { id: string; name: string; price: number; stock: number; image_url?: string; }
@@ -62,7 +63,7 @@ interface Props {
         is_fully_shipped?: boolean;
         has_shipped_items?: boolean;
         shipping_progress?: number;
-        timeline?: any[]; // ✅ Timeline data from backend
+        timeline?: any[];
     } | null;
 }
 
@@ -103,14 +104,18 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
     // ✅ Logic Flags
     const isConfirmed = order?.status === 'confirmed';
     const isCancelled = order?.status === 'cancelled';
+
+    // ✅ [Modified] สถานะที่ห้ามแก้ไข: Cancelled หรือ Completed
     const isReadOnly = order ? ['cancelled', 'completed'].includes(order.status) : false;
+
     const isEditMode = !!order;
 
     // ✅ New Shipping Flags
     const isFullyShipped = order?.is_fully_shipped ?? false;
     const hasShippedItems = order?.has_shipped_items ?? false;
 
-    const isHeaderReadOnly = isConfirmed || isCancelled;
+    // ✅ [Modified] Header is read-only if Confirmed OR ReadOnly
+    const isHeaderReadOnly = isConfirmed || isReadOnly;
 
     const calculateSubtotal = () => data.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
     const taxAmount = calculateSubtotal() * 0.07;
@@ -278,12 +283,13 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                 <Tooltip>
                                     <TooltipTrigger asChild>
                                         <div>
+                                            {/* ✅ [Modified] Disable Cancel Button if ReadOnly */}
                                             <Button
                                                 variant="outline"
                                                 size={"icon"}
-                                                className={cn("ml-1", hasShippedItems ? "text-gray-300 border-gray-200" : "text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700")}
+                                                className={cn("ml-1", hasShippedItems || isReadOnly ? "text-gray-300 border-gray-200" : "text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700")}
                                                 onClick={handleCancelOrder}
-                                                disabled={hasShippedItems}
+                                                disabled={hasShippedItems || isReadOnly}
                                             >
                                                 <XCircle className="h-4 w-4" />
                                             </Button>
@@ -330,16 +336,17 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             </div>
                         </div>
 
-                        {/* ✅ TABS IMPLEMENTATION */}
+                        {/* TABS IMPLEMENTATION */}
                         <Tabs defaultValue="details" className="w-full">
                             <TabsList className="grid w-full grid-cols-2 lg:w-[400px] mb-4">
                                 <TabsTrigger value="details">Order Details</TabsTrigger>
                                 {isEditMode && <TabsTrigger value="tracking">History & Tracking</TabsTrigger>}
                             </TabsList>
 
-                            {/* --- TAB 1: DETAILS (ฟอร์มเดิม) --- */}
+                            {/* --- TAB 1: DETAILS --- */}
                             <TabsContent value="details">
                                 <div className="bg-white p-6 rounded-lg border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 relative">
+                                    {/* ✅ [Modified] Use isHeaderReadOnly to block interaction */}
                                     {isHeaderReadOnly && <div className="absolute inset-0 bg-gray-50/30 pointer-events-none z-10" />}
                                     <div className="space-y-4">
                                         <div className="grid grid-cols-3 items-center gap-4">
@@ -369,7 +376,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     <TableHead className="w-[35%]">Product</TableHead>
                                                     <TableHead className="w-[25%]">Description</TableHead>
                                                     <TableHead className="w-[10%] text-right">Quantity</TableHead>
-                                                    {isEditMode && <TableHead className="w-[10%] text-right text-blue-600 bg-blue-50/30">Delivered</TableHead>} {/* ✅ Show Shipped Qty */}
+                                                    {isEditMode && <TableHead className="w-[10%] text-right text-blue-600 bg-blue-50/30">Delivered</TableHead>}
                                                     <TableHead className="w-[10%] text-right">Unit Price</TableHead>
                                                     <TableHead className="w-[10%] text-right">Subtotal</TableHead>
                                                     <TableHead className="w-[5%]"></TableHead>
@@ -380,7 +387,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     const isCancelledItem = isConfirmed && item.id && item.quantity === 0;
                                                     const isItemShipped = (item.qty_shipped || 0) > 0;
 
-                                                    // ✅ Stock Check
+                                                    // Stock Check
                                                     const productInfo = availableProducts.find(p => p.id === item.product_id);
                                                     const isOutOfStock = productInfo ? (item.quantity > productInfo.stock) : false;
                                                     const stockShortage = isOutOfStock ? item.quantity - (productInfo?.stock || 0) : 0;
@@ -399,12 +406,11 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                                     products={availableProducts}
                                                                     value={item.product_id}
                                                                     onChange={(val) => updateItem(index, 'product_id', val)}
-                                                                    disabled={(isConfirmed && !!item.id) || isItemShipped}
+                                                                    disabled={(isConfirmed && !!item.id) || isItemShipped || isReadOnly}
                                                                     placeholder="Select Product"
                                                                 />
-                                                                {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
+                                                                {((isConfirmed && item.id) || isItemShipped || isReadOnly) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
 
-                                                                {/* ✅ Display Stock Info & Warning */}
                                                                 {productInfo && (
                                                                     <div className="mt-2 space-y-1">
                                                                         <div className="flex justify-between text-xs">
@@ -425,8 +431,8 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                                     </div>
                                                                 )}
                                                             </TableCell>
-                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelledItem && "line-through")} /></TableCell>
-                                                            <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} disabled={isItemShipped} /></TableCell>
+                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped || isReadOnly} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelledItem && "line-through")} /></TableCell>
+                                                            <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} disabled={isItemShipped || isReadOnly} /></TableCell>
 
                                                             {/* Shipped Qty Column */}
                                                             {isEditMode && (
@@ -437,17 +443,17 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                                 </TableCell>
                                                             )}
 
-                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} /></TableCell>
+                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped || isReadOnly} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} /></TableCell>
                                                             <TableCell className="text-right font-medium p-2 align-middle"><span className={isCancelledItem ? "line-through text-gray-400" : "text-gray-700"}>{item.total.toLocaleString()} ฿</span>{isCancelledItem && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}</TableCell>
                                                             <TableCell className="p-2 text-center">
                                                                 {isCancelledItem ? (
-                                                                    <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>
+                                                                    <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)} disabled={isReadOnly}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>
                                                                 ) : (
                                                                     !isItemShipped && (
                                                                         (!isConfirmed || !item.id) ? (
-                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)} disabled={isReadOnly}><Trash2 className="h-4 w-4" /></Button>
                                                                         ) : (
-                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)} disabled={isReadOnly}><Trash2 className="h-4 w-4" /></Button>
                                                                         )
                                                                     )
                                                                 )}
@@ -457,7 +463,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                 })}
                                                 <TableRow>
                                                     <TableCell colSpan={isEditMode ? 9 : 8} className="p-2">
-                                                        {!isFullyShipped && (
+                                                        {!isFullyShipped && !isReadOnly && (
                                                             <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}><Plus className="h-4 w-4 mr-2" /> Add a product</Button>
                                                         )}
                                                     </TableCell>
