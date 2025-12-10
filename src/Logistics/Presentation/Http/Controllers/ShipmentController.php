@@ -11,11 +11,10 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Shipment;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Vehicle;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
-use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlipItem; // Use this
 
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
-// ✅ Use Service
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 
 class ShipmentController extends Controller
@@ -23,7 +22,7 @@ class ShipmentController extends Controller
     public function __construct(
         private StockLevelRepositoryInterface $stockRepo,
         private ItemLookupServiceInterface $itemLookupService,
-        private StockPickingService $pickingService // ✅ Inject Service
+        private StockPickingService $pickingService
     ) {}
 
     public function index(Request $request)
@@ -171,7 +170,6 @@ class ShipmentController extends Controller
 
                             if ($itemDto) {
                                 // B. ✅ ใช้ Service คำนวณหาจุดตัดสต็อก (Deduction Plan)
-                                // เน้นหาจาก Reserved / On Hand
                                 $plan = $this->pickingService->calculateShipmentDeductionPlan(
                                     $itemDto->uuid,
                                     $warehouseUuid,
@@ -183,13 +181,11 @@ class ShipmentController extends Controller
                                     $locationUuid = $step['location_uuid'];
                                     $qtyToShip = $step['quantity'];
 
-                                    // Fallback: ถ้า Service หาไม่เจอ ให้ไปตัดที่ GENERAL
                                     if (!$locationUuid) {
                                         $locationUuid = $generalLocationUuid;
                                     }
 
                                     if ($locationUuid) {
-                                        // D. ค้นหา StockLevel ที่พิกัดนั้น
                                         $stockLevel = $this->stockRepo->findByLocation(
                                             $itemDto->uuid,
                                             $locationUuid,
@@ -197,7 +193,6 @@ class ShipmentController extends Controller
                                         );
 
                                         if ($stockLevel) {
-                                            // E. สั่งตัดสต็อก (Hard Deduct)
                                             $stockLevel->shipReserved(
                                                 $qtyToShip,
                                                 auth()->id(),
@@ -225,6 +220,35 @@ class ShipmentController extends Controller
         return back()->with('success', "Shipment status updated to {$request->status}.");
     }
 
+    public function startTrip(string $id)
+    {
+        $request = new Request(['status' => 'shipped']);
+        return $this->updateStatus($request, $id);
+    }
+
+    public function completeTrip(string $id)
+    {
+        $request = new Request(['status' => 'completed']);
+        return $this->updateStatus($request, $id);
+    }
+
+    // ✅ [NEW] Remove Delivery from Shipment
+    public function removeDelivery(Request $request, string $id)
+    {
+         $request->validate(['delivery_note_id' => 'required|exists:sales_delivery_notes,id']);
+
+         $shipment = Shipment::findOrFail($id);
+         if ($shipment->status !== 'planned') {
+             return back()->with('error', 'Cannot remove items from an active shipment.');
+         }
+
+         $delivery = DeliveryNote::findOrFail($request->delivery_note_id);
+         $delivery->update(['shipment_id' => null]);
+
+         return back()->with('success', 'Delivery removed from shipment.');
+    }
+
+    // ✅ [NEW] Unload Logic
     public function unload(Request $request, string $id)
     {
         $request->validate([
@@ -252,7 +276,7 @@ class ShipmentController extends Controller
                 $originalPicking = $delivery->pickingSlip;
                 $newPicking = PickingSlip::create([
                     'picking_number' => $originalPicking->picking_number . '-SP' . rand(10, 99),
-                    'company_id' => $delivery->pickingSlip->company_id,
+                    'company_id' => $delivery->pickingSlip->company_id, // Fix missing company_id
                     'order_id' => $delivery->order_id,
                     'status' => 'done',
                     'picker_user_id' => $originalPicking->picker_user_id,
@@ -278,7 +302,7 @@ class ShipmentController extends Controller
 
                 DeliveryNote::create([
                     'delivery_number' => $delivery->delivery_number . '-SP' . rand(10, 99),
-                    'company_id' => $delivery->company_id,
+                    'company_id' => $delivery->company_id, // Fix missing company_id
                     'order_id' => $delivery->order_id,
                     'picking_slip_id' => $newPicking->id,
                     'shipping_address' => $delivery->shipping_address,
@@ -291,6 +315,7 @@ class ShipmentController extends Controller
         return back()->with('success', 'Unloaded successfully.');
     }
 
+    // ✅ [NEW] API for modal
     public function getDeliveryItems(string $deliveryId)
     {
         $delivery = DeliveryNote::with('pickingSlip.items')->findOrFail($deliveryId);

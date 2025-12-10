@@ -8,7 +8,9 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use TmrEcosystem\Customers\Infrastructure\Persistence\Models\Customer;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNote;
 
 class SalesOrderModel extends Model
 {
@@ -39,14 +41,26 @@ class SalesOrderModel extends Model
         return $this->belongsTo(Customer::class, 'customer_id');
     }
 
-    // ✅ เพิ่มความสัมพันธ์ HasMany ไปหา PickingSlip
-    public function pickingSlips(): HasMany
+    public function isBackorder(): bool
+    {
+        return $this->stock_status === 'backorder';
+    }
+
+    // ✅ [เพิ่ม] ความสัมพันธ์กับ Picking Slips
+    public function pickingSlips()
     {
         return $this->hasMany(PickingSlip::class, 'order_id');
     }
 
-    public function isBackorder(): bool
+    // ✅ [เพิ่ม] ความสัมพันธ์กับ Delivery Notes
+    public function deliveryNotes()
     {
-        return $this->stock_status === 'backorder';
+        return $this->hasMany(DeliveryNote::class, 'order_id');
+    }
+
+    // ✅ [เพิ่ม] ความสัมพันธ์กับ Return Notes
+    public function returnNotes()
+    {
+        return $this->hasMany(ReturnNote::class, 'order_id');
     }
 }

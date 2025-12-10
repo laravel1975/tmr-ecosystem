@@ -6,13 +6,17 @@ import { Input } from "@/Components/ui/input";
 import { Label } from "@/Components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/Components/ui/select";
-import { Card, CardContent } from "@/Components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/Components/ui/card";
 import { Textarea } from "@/Components/ui/textarea";
-import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer, PackageX } from "lucide-react";
+import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer, PackageX, FileText, CheckCircle, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/Components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/Components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/Components/ui/tooltip';
+
+// ✅ Import Tabs & Timeline
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/Components/ui/tabs";
+import OrderTimeline from '@/Components/Sales/OrderTimeline';
 
 // Components
 import SalesNavigationMenu from './Partials/SalesNavigationMenu';
@@ -21,6 +25,7 @@ import Breadcrumbs from '@/Components/Breadcrumbs';
 import SmartButton from '@/Components/SmartButton';
 import ProductCombobox from '@/Components/ProductCombobox';
 import ImageViewer from '@/Components/ImageViewer';
+import { Badge } from '@/Components/ui/badge'; // Make sure to import Badge
 
 // --- Types ---
 interface Product { id: string; name: string; price: number; stock: number; image_url?: string; }
@@ -58,6 +63,7 @@ interface Props {
         is_fully_shipped?: boolean;
         has_shipped_items?: boolean;
         shipping_progress?: number;
+        timeline?: any[]; // ✅ Timeline data from backend
     } | null;
 }
 
@@ -99,6 +105,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
     const isConfirmed = order?.status === 'confirmed';
     const isCancelled = order?.status === 'cancelled';
     const isReadOnly = order ? ['cancelled', 'completed'].includes(order.status) : false;
+    const isEditMode = !!order;
 
     // ✅ New Shipping Flags
     const isFullyShipped = order?.is_fully_shipped ?? false;
@@ -195,6 +202,11 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
         }
         if (confirm("ยืนยันการยกเลิกออเดอร์นี้?")) router.post(route('sales.orders.cancel', order!.id));
     };
+
+    // Helper to calculate totals for dashboard
+    const getTotalOrdered = () => data.items.reduce((s, i) => s + i.quantity, 0);
+    const getTotalShipped = () => data.items.reduce((s, i) => s + (i.qty_shipped || 0), 0);
+    const getBackorder = () => data.items.reduce((s, i) => s + Math.max(0, i.quantity - (i.qty_shipped || 0)), 0);
 
     return (
         <AuthenticatedLayout user={auth.user} navigationMenu={<SalesNavigationMenu />}>
@@ -305,7 +317,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                 </div>
             </div>
 
-            <div className="max-w-7xl mx-auto py-4">
+            <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
                 <Card className="border-0 shadow-none bg-transparent">
                     <CardContent className="p-0 space-y-6">
                         <div className="flex justify-between items-start">
@@ -319,131 +331,221 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             </div>
                         </div>
 
-                        <div className="bg-white p-6 rounded-lg border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 relative">
-                            {isHeaderReadOnly && <div className="absolute inset-0 bg-gray-50/30 pointer-events-none z-10" />}
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-3 items-center gap-4">
-                                    <Label className="text-right font-medium">Customer</Label>
-                                    <div className="col-span-2 relative">
-                                        <Popover open={!isHeaderReadOnly && openCustomer} onOpenChange={setOpenCustomer}>
-                                            <PopoverTrigger asChild><Button variant="outline" role="combobox" disabled={isHeaderReadOnly} className={cn("w-full justify-between pl-3 text-left font-normal", !data.customer_id && "text-muted-foreground")}>{data.customer_id ? customers.find((c) => c.id === data.customer_id)?.name : "Search for a customer..."}{!isHeaderReadOnly && <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}</Button></PopoverTrigger>
-                                            <PopoverContent className="w-[400px] p-0" align="start"><Command><CommandInput placeholder="Search customer..." /><CommandList><CommandEmpty>No customer found.</CommandEmpty><CommandGroup>{customers.map((customer) => (<CommandItem key={customer.id} value={customer.name} onSelect={() => { setData('customer_id', customer.id); setOpenCustomer(false); }}><Check className={cn("mr-2 h-4 w-4", data.customer_id === customer.id ? "opacity-100" : "opacity-0")} />{customer.name}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent>
-                                        </Popover>
-                                        {isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-3 top-3" />}
+                        {/* ✅ TABS IMPLEMENTATION */}
+                        <Tabs defaultValue="details" className="w-full">
+                            <TabsList className="grid w-full grid-cols-2 lg:w-[400px] mb-4">
+                                <TabsTrigger value="details">Order Details</TabsTrigger>
+                                {isEditMode && <TabsTrigger value="tracking">History & Tracking</TabsTrigger>}
+                            </TabsList>
+
+                            {/* --- TAB 1: DETAILS (ฟอร์มเดิม) --- */}
+                            <TabsContent value="details">
+                                <div className="bg-white p-6 rounded-lg border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 relative">
+                                    {isHeaderReadOnly && <div className="absolute inset-0 bg-gray-50/30 pointer-events-none z-10" />}
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-3 items-center gap-4">
+                                            <Label className="text-right font-medium">Customer</Label>
+                                            <div className="col-span-2 relative">
+                                                <Popover open={!isHeaderReadOnly && openCustomer} onOpenChange={setOpenCustomer}>
+                                                    <PopoverTrigger asChild><Button variant="outline" role="combobox" disabled={isHeaderReadOnly} className={cn("w-full justify-between pl-3 text-left font-normal", !data.customer_id && "text-muted-foreground")}>{data.customer_id ? customers.find((c: Customer) => c.id === data.customer_id)?.name : "Search for a customer..."}{!isHeaderReadOnly && <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}</Button></PopoverTrigger>
+                                                    <PopoverContent className="w-[400px] p-0" align="start"><Command><CommandInput placeholder="Search customer..." /><CommandList><CommandEmpty>No customer found.</CommandEmpty><CommandGroup>{customers.map((customer: Customer) => (<CommandItem key={customer.id} value={customer.name} onSelect={() => { setData('customer_id', customer.id); setOpenCustomer(false); }}><Check className={cn("mr-2 h-4 w-4", data.customer_id === customer.id ? "opacity-100" : "opacity-0")} />{customer.name}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent>
+                                                </Popover>
+                                                {isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-3 top-3" />}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-3 items-center gap-4"><Label className="text-right">Quotation Date</Label><div className="col-span-2 relative"><Input type="date" disabled={isHeaderReadOnly} value={data.order_date} onChange={e => setData('order_date', e.target.value)} />{isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-3 top-3" />}</div></div>
+                                        <div className="grid grid-cols-3 items-center gap-4"><Label className="text-right">Payment Terms</Label><div className="col-span-2 relative"><Select disabled={isHeaderReadOnly} value={data.payment_terms} onValueChange={val => setData('payment_terms', val)}><SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent><SelectItem value="immediate">Immediate</SelectItem><SelectItem value="15_days">15 Days</SelectItem><SelectItem value="30_days">30 Days</SelectItem></SelectContent></Select>{isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-8 top-3" />}</div></div>
                                     </div>
                                 </div>
-                            </div>
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-3 items-center gap-4"><Label className="text-right">Quotation Date</Label><div className="col-span-2 relative"><Input type="date" disabled={isHeaderReadOnly} value={data.order_date} onChange={e => setData('order_date', e.target.value)} />{isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-3 top-3" />}</div></div>
-                                <div className="grid grid-cols-3 items-center gap-4"><Label className="text-right">Payment Terms</Label><div className="col-span-2 relative"><Select disabled={isHeaderReadOnly} value={data.payment_terms} onValueChange={val => setData('payment_terms', val)}><SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent><SelectItem value="immediate">Immediate</SelectItem><SelectItem value="15_days">15 Days</SelectItem><SelectItem value="30_days">30 Days</SelectItem></SelectContent></Select>{isHeaderReadOnly && <Lock className="w-4 h-4 text-gray-400 absolute right-8 top-3" />}</div></div>
-                            </div>
-                        </div>
 
-                        <div className="bg-white rounded-lg border shadow-sm overflow-hidden min-h-[400px] flex flex-col">
-                            <div className="flex border-b bg-gray-50"><button className="px-6 py-3 text-sm font-medium border-b-2 border-purple-700 text-purple-700 bg-white">Order Lines</button></div>
-                            <div className="p-0 flex-1">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow className="bg-gray-50/50">
-                                            <TableHead className="w-[60px] text-center">Image</TableHead>
-                                            <TableHead className="w-[35%]">Product</TableHead>
-                                            <TableHead className="w-[25%]">Description</TableHead>
-                                            <TableHead className="w-[10%] text-right">Quantity</TableHead>
-                                            <TableHead className="w-[10%] text-right text-blue-600">Delivered</TableHead>
-                                            <TableHead className="w-[10%] text-right">Unit Price</TableHead>
-                                            <TableHead className="w-[10%] text-right">Subtotal</TableHead>
-                                            <TableHead className="w-[5%]"></TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {data.items.map((item, index) => {
-                                            const isCancelled = isConfirmed && item.id && item.quantity === 0;
-                                            const isItemShipped = (item.qty_shipped || 0) > 0;
+                                <div className="bg-white rounded-lg border shadow-sm overflow-hidden min-h-[400px] flex flex-col mt-6">
+                                    <div className="flex border-b bg-gray-50"><button className="px-6 py-3 text-sm font-medium border-b-2 border-purple-700 text-purple-700 bg-white">Order Lines</button></div>
+                                    <div className="p-0 flex-1">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow className="bg-gray-50/50">
+                                                    <TableHead className="w-[60px] text-center">Image</TableHead>
+                                                    <TableHead className="w-[35%]">Product</TableHead>
+                                                    <TableHead className="w-[25%]">Description</TableHead>
+                                                    <TableHead className="w-[10%] text-right">Quantity</TableHead>
+                                                    {isEditMode && <TableHead className="w-[10%] text-right text-blue-600 bg-blue-50/30">Delivered</TableHead>} {/* ✅ Show Shipped Qty */}
+                                                    <TableHead className="w-[10%] text-right">Unit Price</TableHead>
+                                                    <TableHead className="w-[10%] text-right">Subtotal</TableHead>
+                                                    <TableHead className="w-[5%]"></TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {data.items.map((item, index) => {
+                                                    const isCancelledItem = isConfirmed && item.id && item.quantity === 0;
+                                                    const isItemShipped = (item.qty_shipped || 0) > 0;
 
-                                            // ✅ Stock Availability Check
-                                            const productInfo = availableProducts.find(p => p.id === item.product_id);
-                                            const isOutOfStock = productInfo ? (item.quantity > productInfo.stock) : false;
-                                            const stockShortage = isOutOfStock ? item.quantity - (productInfo?.stock || 0) : 0;
+                                                    // ✅ Stock Check
+                                                    const productInfo = availableProducts.find(p => p.id === item.product_id);
+                                                    const isOutOfStock = productInfo ? (item.quantity > productInfo.stock) : false;
+                                                    const stockShortage = isOutOfStock ? item.quantity - (productInfo?.stock || 0) : 0;
 
-                                            return (
-                                                <TableRow key={index} className={cn("group align-top", isCancelled && "bg-gray-50 opacity-60")}>
-                                                    <TableCell className="p-2 text-center align-top">
-                                                        {item.image_url ? (
-                                                            <ImageViewer images={[item.image_url]} alt="Product" className="w-10 h-10 rounded border bg-white object-contain" />
-                                                        ) : (
-                                                            <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center border text-gray-300"><ImageIcon className="w-5 h-5" /></div>
-                                                        )}
-                                                    </TableCell>
-                                                    <TableCell className="p-2 relative w-[350px]">
-                                                        <ProductCombobox
-                                                            products={availableProducts}
-                                                            value={item.product_id}
-                                                            onChange={(val) => updateItem(index, 'product_id', val)}
-                                                            disabled={(isConfirmed && !!item.id) || isItemShipped}
-                                                            placeholder="Select Product"
-                                                        />
-                                                        {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
+                                                    return (
+                                                        <TableRow key={index} className={cn("group align-top", isCancelledItem && "bg-gray-50 opacity-60")}>
+                                                            <TableCell className="p-2 text-center align-top">
+                                                                {item.image_url ? (
+                                                                    <ImageViewer images={[item.image_url]} alt="Product" className="w-10 h-10 rounded border bg-white object-contain" />
+                                                                ) : (
+                                                                    <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center border text-gray-300"><ImageIcon className="w-5 h-5" /></div>
+                                                                )}
+                                                            </TableCell>
+                                                            <TableCell className="p-2 relative w-[350px]">
+                                                                <ProductCombobox
+                                                                    products={availableProducts}
+                                                                    value={item.product_id}
+                                                                    onChange={(val) => updateItem(index, 'product_id', val)}
+                                                                    disabled={(isConfirmed && !!item.id) || isItemShipped}
+                                                                    placeholder="Select Product"
+                                                                />
+                                                                {((isConfirmed && item.id) || isItemShipped) && <Lock className="w-3 h-3 text-gray-400 absolute right-3 top-6" />}
 
-                                                        {/* ✅ Display Stock Info & Warning */}
-                                                        {productInfo && (
-                                                            <div className="mt-2 space-y-1">
-                                                                <div className="flex justify-between text-xs">
-                                                                    <span className="text-gray-500">Stock Available:</span>
-                                                                    <span className={cn("font-medium", productInfo.stock < item.quantity ? "text-red-600" : "text-green-600")}>
-                                                                        {productInfo.stock} units
-                                                                    </span>
-                                                                </div>
-                                                                {isOutOfStock && (
-                                                                    <div className="flex items-start gap-2 p-2 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-xs">
-                                                                        <PackageX className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-                                                                        <div>
-                                                                            <p className="font-semibold">Insufficient Stock!</p>
-                                                                            <p>Missing {stockShortage} units. Order will be set to <span className="font-bold underline">Backorder</span> status.</p>
+                                                                {/* ✅ Display Stock Info & Warning */}
+                                                                {productInfo && (
+                                                                    <div className="mt-2 space-y-1">
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-gray-500">Stock Available:</span>
+                                                                            <span className={cn("font-medium", productInfo.stock < item.quantity ? "text-red-600" : "text-green-600")}>
+                                                                                {productInfo.stock} units
+                                                                            </span>
                                                                         </div>
+                                                                        {isOutOfStock && !isItemShipped && !isCancelledItem && (
+                                                                            <div className="flex items-start gap-2 p-2 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-xs">
+                                                                                <PackageX className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                                                                                <div>
+                                                                                    <p className="font-semibold">Insufficient Stock!</p>
+                                                                                    <p>Missing {stockShortage} units. Order will be set to <span className="font-bold underline">Backorder</span> status.</p>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 )}
-                                                            </div>
-                                                        )}
-                                                    </TableCell>
-                                                    <TableCell className="p-2"><Input disabled={isCancelled || isItemShipped} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelled && "line-through")} /></TableCell>
-                                                    <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelled && "bg-yellow-50/50")} disabled={isItemShipped} /></TableCell>
-                                                    <TableCell className="p-2 text-right align-middle"><span className={cn("font-medium", (item.qty_shipped || 0) >= item.quantity ? "text-green-600" : "text-orange-500")}>{item.qty_shipped || 0}</span></TableCell>
-                                                    <TableCell className="p-2"><Input disabled={isCancelled || isItemShipped} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelled && "bg-yellow-50/50")} /></TableCell>
-                                                    <TableCell className="text-right font-medium p-2 align-middle"><span className={isCancelled ? "line-through text-gray-400" : "text-gray-700"}>{item.total.toLocaleString()} ฿</span>{isCancelled && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}</TableCell>
-                                                    <TableCell className="p-2 text-center">
-                                                        {isCancelled ? (
-                                                            <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>
-                                                        ) : (
-                                                            !isItemShipped && (
-                                                                (!isConfirmed || !item.id) ? (
-                                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
+                                                            </TableCell>
+                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped} value={item.description} onChange={(e) => updateItem(index, 'description', e.target.value)} className={cn("border-0 shadow-none h-9", isCancelledItem && "line-through")} /></TableCell>
+                                                            <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} disabled={isItemShipped} /></TableCell>
+
+                                                            {/* Shipped Qty Column */}
+                                                            {isEditMode && (
+                                                                <TableCell className="p-2 text-right align-middle bg-blue-50/10">
+                                                                    <span className={cn("font-bold text-sm", (item.qty_shipped || 0) >= item.quantity ? "text-green-600" : (item.qty_shipped || 0) > 0 ? "text-orange-500" : "text-gray-300")}>
+                                                                        {item.qty_shipped || 0}
+                                                                    </span>
+                                                                </TableCell>
+                                                            )}
+
+                                                            <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} /></TableCell>
+                                                            <TableCell className="text-right font-medium p-2 align-middle"><span className={isCancelledItem ? "line-through text-gray-400" : "text-gray-700"}>{item.total.toLocaleString()} ฿</span>{isCancelledItem && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}</TableCell>
+                                                            <TableCell className="p-2 text-center">
+                                                                {isCancelledItem ? (
+                                                                    <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>
                                                                 ) : (
-                                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
-                                                                )
-                                                            )
+                                                                    !isItemShipped && (
+                                                                        (!isConfirmed || !item.id) ? (
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
+                                                                        ) : (
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-500" onClick={() => removeItem(index)}><Trash2 className="h-4 w-4" /></Button>
+                                                                        )
+                                                                    )
+                                                                )}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    );
+                                                })}
+                                                <TableRow>
+                                                    <TableCell colSpan={isEditMode ? 9 : 8} className="p-2">
+                                                        {!isFullyShipped && (
+                                                            <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}><Plus className="h-4 w-4 mr-2" /> Add a product</Button>
                                                         )}
                                                     </TableCell>
                                                 </TableRow>
-                                            );
-                                        })}
-                                        <TableRow>
-                                            <TableCell colSpan={8} className="p-2">
-                                                {!isFullyShipped && (
-                                                    <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}><Plus className="h-4 w-4 mr-2" /> Add a product</Button>
-                                                )}
-                                            </TableCell>
-                                        </TableRow>
-                                    </TableBody>
-                                </Table>
-                            </div>
-                            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8 border-t">
-                                <Textarea disabled={isHeaderReadOnly} placeholder="Terms..." className="resize-none h-32 bg-gray-50" value={data.note} onChange={e => setData('note', e.target.value)} />
-                                <div className="flex flex-col items-end space-y-3 text-sm">
-                                    <div className="flex justify-between w-2/3"><span>Total:</span><span className="font-bold text-lg">{grandTotal.toLocaleString()} ฿</span></div>
-                                    {isConfirmed && Math.abs(priceDifference) > 0 && <div className="flex items-center gap-2 text-xs bg-gray-100 px-3 py-1 rounded-full border"><span className="text-gray-500">Original: {originalTotal.toLocaleString()}</span><ArrowRight className="w-3 h-3 text-gray-400" /><span className={priceDifference > 0 ? "text-red-600 font-bold" : "text-green-600 font-bold"}>{priceDifference > 0 ? "+" : ""}{priceDifference.toLocaleString()}</span></div>}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                    <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8 border-t">
+                                        <Textarea disabled={isHeaderReadOnly} placeholder="Terms..." className="resize-none h-32 bg-gray-50" value={data.note} onChange={e => setData('note', e.target.value)} />
+                                        <div className="flex flex-col items-end space-y-3 text-sm">
+                                            <div className="flex justify-between w-2/3"><span>Total:</span><span className="font-bold text-lg">{grandTotal.toLocaleString()} ฿</span></div>
+                                            {isConfirmed && Math.abs(priceDifference) > 0 && <div className="flex items-center gap-2 text-xs bg-gray-100 px-3 py-1 rounded-full border"><span className="text-gray-500">Original: {originalTotal.toLocaleString()}</span><ArrowRight className="w-3 h-3 text-gray-400" /><span className={priceDifference > 0 ? "text-red-600 font-bold" : "text-green-600 font-bold"}>{priceDifference > 0 ? "+" : ""}{priceDifference.toLocaleString()}</span></div>}
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
+                            </TabsContent>
+
+                            {/* --- TAB 2: TRACKING & HISTORY --- */}
+                            {isEditMode && (
+                                <TabsContent value="tracking">
+                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                                        {/* Timeline Component */}
+                                        <div className="lg:col-span-1">
+                                            <OrderTimeline events={order.timeline || []} />
+                                        </div>
+
+                                        {/* Summary Stats */}
+                                        <div className="lg:col-span-2 space-y-6">
+                                            <Card>
+                                                <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="w-5 h-5 text-indigo-600"/> Fulfillment Status</CardTitle></CardHeader>
+                                                <CardContent>
+                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                                        <div className="p-4 bg-gray-50 rounded-lg border">
+                                                            <div className="text-xs text-gray-500 uppercase font-bold mb-1">Total Ordered</div>
+                                                            <div className="text-3xl font-bold text-gray-800">{getTotalOrdered()}</div>
+                                                        </div>
+                                                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                                                            <div className="text-xs text-blue-600 uppercase font-bold mb-1">Shipped</div>
+                                                            <div className="text-3xl font-bold text-blue-700">
+                                                                {getTotalShipped()}
+                                                            </div>
+                                                        </div>
+                                                        <div className="p-4 bg-red-50 rounded-lg border border-red-100">
+                                                            <div className="text-xs text-red-600 uppercase font-bold mb-1">Backorder</div>
+                                                            <div className="text-3xl font-bold text-red-700">
+                                                                {getBackorder()}
+                                                            </div>
+                                                        </div>
+                                                        <div className="p-4 bg-green-50 rounded-lg border border-green-100">
+                                                            <div className="text-xs text-green-600 uppercase font-bold mb-1">Progress</div>
+                                                            <div className="text-3xl font-bold text-green-700">
+                                                                {order.shipping_progress}%
+                                                            </div>
+                                                        </div>
+                                                     </div>
+                                                </CardContent>
+                                            </Card>
+
+                                            {/* Related Documents */}
+                                            <Card>
+                                                <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5 text-gray-500"/> Related Documents</CardTitle></CardHeader>
+                                                <CardContent>
+                                                    <div className="space-y-4">
+                                                        {order.picking_count ? (
+                                                            <div className="flex items-center justify-between p-3 bg-white border rounded-lg hover:shadow-sm transition-shadow">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="p-2 bg-indigo-50 rounded-full text-indigo-600"><Package className="w-5 h-5" /></div>
+                                                                    <div>
+                                                                        <p className="font-bold text-sm">Picking Slips</p>
+                                                                        <p className="text-xs text-gray-500">{order.picking_count} document(s) generated</p>
+                                                                    </div>
+                                                                </div>
+                                                                <Link href={route('logistics.picking.index', { search: order.order_number })}>
+                                                                    <Button variant="outline" size="sm">View</Button>
+                                                                </Link>
+                                                            </div>
+                                                        ) : (
+                                                            <p className="text-sm text-gray-400 italic text-center py-4">No logistics documents generated yet.</p>
+                                                        )}
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        </div>
+                                     </div>
+                                </TabsContent>
+                            )}
+                        </Tabs>
                     </CardContent>
                 </Card>
             </div>

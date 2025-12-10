@@ -42,7 +42,7 @@ export default function CreateShipment({ auth, readyDeliveries, vehicles, newShi
 
     // --- Handlers ---
     const handleVehicleChange = (vehicleId: string) => {
-        const vehicle = vehicles.find((v: VehicleOption) => v.id === vehicleId);
+        const vehicle = vehicles.find((v: VehicleOption) => v.id == vehicleId); // Loose equality for string/number id match
         setData(data => ({
             ...data,
             vehicle_id: vehicleId,
@@ -79,7 +79,7 @@ export default function CreateShipment({ auth, readyDeliveries, vehicles, newShi
                         </Button>
                         <h2 className="text-2xl font-bold text-gray-800">Plan New Shipment</h2>
                     </div>
-                    <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700" disabled={processing}>
+                    <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700" disabled={processing || data.delivery_note_ids.length === 0}>
                         <Save className="w-4 h-4 mr-2" /> Create Shipment
                     </Button>
                 </div>
@@ -114,7 +114,7 @@ export default function CreateShipment({ auth, readyDeliveries, vehicles, newShi
                                     <SelectTrigger><SelectValue placeholder="Select Vehicle" /></SelectTrigger>
                                     <SelectContent>
                                         {vehicles.map((v: VehicleOption) => (
-                                            <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                                            <SelectItem key={v.id} value={v.id.toString()}>{v.name}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>

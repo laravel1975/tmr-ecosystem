@@ -208,7 +208,6 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                         )}
 
                         {/* ✅ [แก้ไข] ปุ่ม Print Manifest (ลิงก์ไป PDF Controller) */}
-                        {/* ต้องมั่นใจว่า Route 'logistics.shipments.manifest' ถูกสร้างแล้ว */}
                         <Button variant="outline" className="gap-2" asChild>
                             <a href={route('logistics.shipments.manifest', shipment.id)} target="_blank">
                                 <Printer className="w-4 h-4" /> Print Manifest (PDF)
@@ -276,7 +275,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                                     <div className="text-xs text-orange-600 mt-2 font-medium ml-6">Out: {shipment.departed_at}</div>
                                 )}
                                 {shipment.completed_at && (
-                                    <div className="text-xs text-green-600 mt-1 font-medium ml-6">In:   {shipment.completed_at}</div>
+                                    <div className="text-xs text-green-600 mt-1 font-medium ml-6">In:   {shipment.completed_at}</div>
                                 )}
                             </div>
                             {shipment.note && (

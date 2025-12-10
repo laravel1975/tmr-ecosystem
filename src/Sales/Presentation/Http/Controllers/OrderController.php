@@ -28,6 +28,8 @@ use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseM
 // ✅ Import Service Interface
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Contracts\StockCheckServiceInterface;
+// ✅ [เพิ่ม] Traceability Service
+use TmrEcosystem\Sales\Application\Services\OrderTraceabilityService;
 
 class OrderController extends Controller
 {
@@ -37,7 +39,8 @@ class OrderController extends Controller
         private CancelOrderUseCase $cancelOrderUseCase,
         private OrderRepositoryInterface $orderRepository,
         private ItemLookupServiceInterface $itemLookupService,
-        private StockCheckServiceInterface $stockCheckService
+        private StockCheckServiceInterface $stockCheckService,
+        private OrderTraceabilityService $traceabilityService // ✅ [เพิ่ม] Inject Service ใหม่
     ) {}
 
     public function dashboard()
@@ -184,7 +187,7 @@ class OrderController extends Controller
         }
     }
 
-    // ✅ [Update] ปรับปรุงเมธอด show เพื่อคำนวณสถานะการจัดส่ง
+    // ✅ [Update] ปรับปรุงเมธอด show เพื่อคำนวณสถานะการจัดส่ง + Timeline
     public function show(string $id, OrderRepositoryInterface $repo)
     {
         $order = $repo->findById($id);
@@ -242,6 +245,9 @@ class OrderController extends Controller
             $isFullyShipped = false;
         }
 
+        // ✅ [เพิ่ม] เรียกข้อมูล Timeline จาก Service
+        $timelineData = $this->traceabilityService->getOrderTimeline($id);
+
         return Inertia::render('Sales/CreateOrder', [
             'customers' => $this->getCustomerOptions(),
             'availableProducts' => $this->getProductOptions($orderProductIds),
@@ -260,7 +266,10 @@ class OrderController extends Controller
                 // ✅ ส่ง Flags ไป Frontend
                 'is_fully_shipped' => $isFullyShipped,
                 'has_shipped_items' => $hasShippedItems,
-                'shipping_progress' => $totalQty > 0 ? round(($totalShipped / $totalQty) * 100) : 0
+                'shipping_progress' => $totalQty > 0 ? round(($totalShipped / $totalQty) * 100) : 0,
+
+                // ✅ ส่ง Timeline ไป Frontend
+                'timeline' => $timelineData
             ]
         ]);
     }
