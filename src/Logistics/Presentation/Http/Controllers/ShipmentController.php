@@ -29,7 +29,10 @@ class ShipmentController extends Controller
 
     public function index(Request $request)
     {
-        $query = Shipment::query()->with(['vehicle', 'deliveryNotes.order.customer']);
+        // ✅ [Modified] เพิ่ม whereHas('deliveryNotes') เพื่อกรอง Shipment เปล่าออก
+        $query = Shipment::query()
+            ->with(['vehicle', 'deliveryNotes.order.customer'])
+            ->whereHas('deliveryNotes');
 
         if ($request->search) {
             $query->where('shipment_number', 'like', "%{$request->search}%");

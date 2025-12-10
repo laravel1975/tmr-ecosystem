@@ -6,9 +6,9 @@ import { Input } from "@/Components/ui/input";
 import { Label } from "@/Components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/Components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/Components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/Components/ui/card";
 import { Textarea } from "@/Components/ui/textarea";
-import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, AlertCircle, Printer, PackageX, FileText, CheckCircle, Package } from "lucide-react";
+import { Trash2, Plus, ChevronRight, ChevronLeft, Check, ChevronsUpDown, Save, FileCheck, RefreshCw, Lock, ArrowRight, RotateCcw, XCircle, Truck, Image as ImageIcon, Printer, PackageX, FileText, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/Components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/Components/ui/popover";
@@ -25,7 +25,6 @@ import Breadcrumbs from '@/Components/Breadcrumbs';
 import SmartButton from '@/Components/SmartButton';
 import ProductCombobox from '@/Components/ProductCombobox';
 import ImageViewer from '@/Components/ImageViewer';
-import { Badge } from '@/Components/ui/badge'; // Make sure to import Badge
 
 // --- Types ---
 interface Product { id: string; name: string; price: number; stock: number; image_url?: string; }
