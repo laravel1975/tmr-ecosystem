@@ -91,10 +91,6 @@ class DeliveryController extends Controller
             // ดึงข้อมูลสินค้า (Master Data)
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
 
-            // ข้อมูลการสั่งซื้อ (สำหรับ Reference)
-            // หมายเหตุ: การดึง salesOrderItem อาจจะต้องระวัง N+1 ถ้าไม่ได้ Eager Load มา
-            // แต่ใน case นี้ปริมาณต่อใบไม่เยอะมาก พอรับได้ หรือจะเพิ่ม with('pickingSlip.items.salesOrderItem') ก็ได้
-
             return [
                 'id' => $pickItem->id,
                 'product_id' => $pickItem->product_id,
@@ -131,6 +127,9 @@ class DeliveryController extends Controller
                 'picking_number' => $delivery->pickingSlip->picking_number ?? '-',
                 'shipment_id' => $delivery->shipment_id,
                 'shipment_number' => $delivery->shipment ? $delivery->shipment->shipment_number : null,
+
+                // ✅ เพิ่มบรรทัดนี้สำหรับ Public Tracking Link
+                'tracking_token' => $delivery->tracking_token,
             ],
             'items' => $items,
             'vehicles' => $vehicles,

@@ -1,16 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import {
     ArrowLeft, Printer, MapPin, Phone,
-    FileText, User, Calendar, Package, Truck
+    FileText, User, Calendar, Package, Truck, Image as ImageIcon, Link as LinkIcon, Check
 } from "lucide-react";
 import { format } from 'date-fns';
 import InventoryNavigationMenu from '@/Pages/Inventory/Partials/InventoryNavigationMenu';
 import ImageViewer from '@/Components/ImageViewer';
 import { Button } from "@/Components/ui/button";
 import { Badge } from "@/Components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table"; // ✅ ใช้ Table Component
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table";
 import { cn } from '@/lib/utils';
 
 // --- Types ---
@@ -38,6 +38,7 @@ interface DeliveryNote {
     carrier_name?: string;
     tracking_number?: string;
     picking_number?: string;
+    tracking_token?: string; // ✅ เพิ่ม Tracking Token
     order?: {
         order_number: string;
         customer?: {
@@ -46,22 +47,19 @@ interface DeliveryNote {
             phone?: string;
         }
     };
-    // รองรับกรณี Items ติดมากับ Delivery Object
     items?: DeliveryItem[];
 }
 
 interface Props {
     auth: any;
     delivery: DeliveryNote;
-    items?: DeliveryItem[]; // ทำให้เป็น Optional เพื่อกัน Error
+    items?: DeliveryItem[];
 }
 
-export default function DeliveryShow({ auth, delivery, items = [] }: Props) { // ✅ 1. ใส่ Default Value = []
+export default function DeliveryShow({ auth, delivery, items = [] }: Props) {
 
-    // ✅ 2. Safe Fallback Logic:
-    // ถ้า items (prop แยก) ไม่มีค่า ให้ลองไปหาใน delivery.items แทน
-    // ถ้าไม่มีทั้งคู่ ให้เป็น array ว่าง [] เพื่อกัน .map() พัง
     const safeItems = (items && items.length > 0) ? items : (delivery.items || []);
+    const [copied, setCopied] = useState(false); // ✅ State สำหรับ Copy Link
 
     const getStatusBadge = (status: string) => {
         const styles: Record<string, string> = {
@@ -80,6 +78,19 @@ export default function DeliveryShow({ auth, delivery, items = [] }: Props) { //
     };
 
     const encodeCode128 = (text: string) => text;
+
+    // ✅ ฟังก์ชัน Copy Tracking Link
+    const copyTrackingLink = () => {
+        if (!delivery.tracking_token) {
+            alert("No tracking token available.");
+            return;
+        }
+        // สร้าง URL: domain.com/track/{token}
+        const url = `${window.location.origin}/track/${delivery.tracking_token}`;
+        navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     return (
         <AuthenticatedLayout user={auth.user} navigationMenu={<div className="print:hidden"><InventoryNavigationMenu /></div>}>
@@ -121,11 +132,21 @@ export default function DeliveryShow({ auth, delivery, items = [] }: Props) { //
                             </div>
                         </div>
 
-                        <a href={route('logistics.delivery.pdf', delivery.id)} target="_blank">
-                            <Button variant="outline" className="flex-1 sm:flex-none bg-white shadow-sm gap-2 border-gray-300">
-                                <Printer className="w-4 h-4" /> Print PDF
-                            </Button>
-                        </a>
+                        <div className="flex gap-2">
+                            {/* ✅ ปุ่ม Copy Tracking Link */}
+                            {delivery.tracking_token && (
+                                <Button variant="outline" className="flex-1 sm:flex-none bg-white shadow-sm gap-2 border-gray-300 text-blue-600 hover:bg-blue-50" onClick={copyTrackingLink}>
+                                    {copied ? <Check className="w-4 h-4 text-green-600" /> : <LinkIcon className="w-4 h-4" />}
+                                    {copied ? "Copied!" : "Tracking Link"}
+                                </Button>
+                            )}
+
+                            <a href={route('logistics.delivery.pdf', delivery.id)} target="_blank">
+                                <Button variant="outline" className="flex-1 sm:flex-none bg-white shadow-sm gap-2 border-gray-300">
+                                    <Printer className="w-4 h-4" /> Print PDF
+                                </Button>
+                            </a>
+                        </div>
                     </div>
 
                     {/* --- Document Sheet --- */}
@@ -215,7 +236,7 @@ export default function DeliveryShow({ auth, delivery, items = [] }: Props) { //
                             </div>
                         </div>
 
-                        {/* 3. Items Table (✅ Fixed map error here) */}
+                        {/* 3. Items Table */}
                         <div className="mb-10">
                             <div className="rounded-lg border border-gray-200 overflow-hidden">
                                 <Table>

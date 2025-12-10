@@ -3,6 +3,7 @@
 namespace TmrEcosystem\Logistics\Infrastructure\Persistence\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 
@@ -18,6 +19,17 @@ class DeliveryNote extends Model
         'shipped_at' => 'datetime',
         'delivered_at' => 'datetime',
     ];
+
+    // ✅ [เพิ่ม] Auto-generate Token
+    protected static function boot()
+    {
+        parent::boot();
+        static::creating(function ($model) {
+            if (empty($model->tracking_token)) {
+                $model->tracking_token = Str::random(32);
+            }
+        });
+    }
 
     // ความสัมพันธ์กลับไปหา Order
     public function order()
@@ -35,6 +47,12 @@ class DeliveryNote extends Model
     public function shipment()
     {
         return $this->belongsTo(Shipment::class, 'shipment_id');
+    }
+
+    // ✅ [เพิ่ม] Helper เพื่อดึง URL
+    public function getPublicTrackingUrlAttribute()
+    {
+        return route('public.track', ['token' => $this->tracking_token]);
     }
 
     // ✅ [เพิ่มใหม่] Helper Relation: ดึงรายการสินค้า "เฉพาะที่อยู่ในใบส่งของรอบนี้"

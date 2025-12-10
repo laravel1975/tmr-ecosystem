@@ -7,6 +7,7 @@ use TmrEcosystem\Logistics\Presentation\Http\Controllers\VehicleController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\DeliveryController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\DeliveryPdfController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\PickingPdfController;
+use TmrEcosystem\Logistics\Presentation\Http\Controllers\PublicTrackingController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\ReturnNoteController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\ReturnNotePdfController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\ShipmentPdfController;
@@ -54,6 +55,9 @@ Route::put('/delivery/{id}', [DeliveryController::class, 'update'])->name('deliv
 
 // Items API for Modal
 Route::get('/delivery/{id}/items', [ShipmentController::class, 'getDeliveryItems'])->name('delivery.items');
+
+// Public Route (ไม่ต้อง Login)
+Route::get('/track/{token}', [PublicTrackingController::class, 'show'])->name('public.track');
 
 // PDF
 Route::get('/delivery/{id}/pdf', [DeliveryPdfController::class, 'download'])->name('delivery.pdf');
