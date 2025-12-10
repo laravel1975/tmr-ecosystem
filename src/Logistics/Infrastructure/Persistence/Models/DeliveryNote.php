@@ -31,6 +31,12 @@ class DeliveryNote extends Model
         });
     }
 
+    // Accessor (Optional, แต่มีไว้ก็ดี)
+    public function getPublicTrackingUrlAttribute()
+    {
+        return route('public.track', ['token' => $this->tracking_token]);
+    }
+
     // ความสัมพันธ์กลับไปหา Order
     public function order()
     {
@@ -47,12 +53,6 @@ class DeliveryNote extends Model
     public function shipment()
     {
         return $this->belongsTo(Shipment::class, 'shipment_id');
-    }
-
-    // ✅ [เพิ่ม] Helper เพื่อดึง URL
-    public function getPublicTrackingUrlAttribute()
-    {
-        return route('public.track', ['token' => $this->tracking_token]);
     }
 
     // ✅ [เพิ่มใหม่] Helper Relation: ดึงรายการสินค้า "เฉพาะที่อยู่ในใบส่งของรอบนี้"

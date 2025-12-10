@@ -127,8 +127,6 @@ class DeliveryController extends Controller
                 'picking_number' => $delivery->pickingSlip->picking_number ?? '-',
                 'shipment_id' => $delivery->shipment_id,
                 'shipment_number' => $delivery->shipment ? $delivery->shipment->shipment_number : null,
-
-                // ✅ เพิ่มบรรทัดนี้สำหรับ Public Tracking Link
                 'tracking_token' => $delivery->tracking_token,
             ],
             'items' => $items,
@@ -293,6 +291,8 @@ class DeliveryController extends Controller
             'pickingSlip.items',
         ])->findOrFail($id);
 
+        // dd($delivery);
+
         // Map items เฉพาะใน Picking Slip นี้
         $items = $delivery->pickingSlip->items->map(function ($pickItem) {
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
@@ -324,6 +324,7 @@ class DeliveryController extends Controller
                 'contact_phone' => $delivery->contact_phone,
                 'carrier_name' => $delivery->carrier_name,
                 'tracking_number' => $delivery->tracking_number,
+                'tracking_token' => $delivery->tracking_token,
                 'picking_number' => $delivery->pickingSlip->picking_number ?? '-',
                 'order' => [
                     'order_number' => $delivery->order->order_number,
