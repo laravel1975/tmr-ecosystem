@@ -8,58 +8,81 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteUpdated;
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
+use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderItemModel;
 use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
 
 class UpdateSalesOrderStatusOnDelivery implements ShouldQueue
 {
     use InteractsWithQueue;
 
+    // Retry configuration
+    public $tries = 3;
+    public $backoff = 10;
+
     public function handle(DeliveryNoteUpdated $event): void
     {
         $deliveryNote = $event->deliveryNote;
 
-        // 1. สนใจเฉพาะตอนสถานะเป็น Delivered (ส่งของถึงมือลูกค้าแล้ว)
+        // 1. ทำงานเฉพาะเมื่อสถานะเป็น Delivered เท่านั้น
         if ($deliveryNote->status !== 'delivered') {
             return;
         }
 
-        Log::info("Sales: Delivery Note {$deliveryNote->delivery_number} delivered. Updating Order status...");
+        Log::info("Sales: Delivery Note {$deliveryNote->delivery_number} delivered. Updating shipped quantities...");
 
-        $order = SalesOrderModel::with('items')->find($deliveryNote->order_id);
+        DB::transaction(function () use ($deliveryNote) {
 
-        if (!$order) {
-            Log::warning("Sales: Order ID {$deliveryNote->order_id} not found for Delivery Note {$deliveryNote->delivery_number}");
-            return;
-        }
+            // 2. ดึงรายการสินค้าที่ถูกจัดส่งจริง (ผ่าน Picking Slip)
+            // ต้อง Join ข้าม Schema (Logistics -> Sales) ใน Monolith ทำได้
+            // แต่ควรระวัง Query Performance
 
-        // 2. ตรวจสอบสถานะ Order ปัจจุบัน (ถ้าจบไปแล้ว หรือยกเลิกไปแล้ว ไม่ต้องทำอะไร)
-        if (in_array($order->status, [OrderStatus::Completed->value, OrderStatus::Cancelled->value])) {
-            return;
-        }
+            $shippedItems = DB::table('logistics_picking_slip_items')
+                ->where('picking_slip_id', $deliveryNote->picking_slip_id)
+                ->get();
 
-        // 3. คำนวณความคืบหน้า (Progress Calculation)
-        // เช็คว่า "ทุกรายการ" ส่งครบแล้วหรือยัง?
-        $isFullyShipped = $order->items->every(function ($item) {
-            return $item->qty_shipped >= $item->quantity;
+            if ($shippedItems->isEmpty()) {
+                Log::warning("Sales: No items found for Delivery Note {$deliveryNote->delivery_number}");
+                return;
+            }
+
+            // 3. อัปเดตยอด Shipped ใน Sales Order Items
+            foreach ($shippedItems as $item) {
+                // Increment qty_shipped แบบ Atomic
+                SalesOrderItemModel::where('id', $item->sales_order_item_id)
+                    ->increment('qty_shipped', $item->quantity_picked);
+            }
+
+            // 4. ตรวจสอบสถานะภาพรวมของ Order
+            $order = SalesOrderModel::with('items')->find($deliveryNote->order_id);
+
+            if (!$order) {
+                Log::error("Sales: Order ID {$deliveryNote->order_id} not found.");
+                return;
+            }
+
+            // เช็คว่า "ทุกรายการ" ส่งครบแล้วหรือยัง?
+            $isFullyShipped = $order->items->every(function ($item) {
+                return $item->qty_shipped >= $item->quantity;
+            });
+
+            // เช็คว่า "มีการส่งบ้างแล้ว" หรือไม่?
+            $hasSomeShipment = $order->items->sum('qty_shipped') > 0;
+
+            // 5. อัปเดตสถานะ Order
+            $newStatus = null;
+
+            if ($isFullyShipped) {
+                // ถ้าส่งครบแล้ว ถือว่าจบงาน (หรือรอ Invoice)
+                $newStatus = OrderStatus::Completed->value;
+                Log::info("Sales: Order {$order->order_number} is FULLY SHIPPED -> Marked as COMPLETED.");
+            } elseif ($hasSomeShipment) {
+                $newStatus = OrderStatus::PartiallyShipped->value;
+                Log::info("Sales: Order {$order->order_number} is PARTIALLY SHIPPED -> Status updated.");
+            }
+
+            if ($newStatus && $newStatus !== $order->status) {
+                $order->update(['status' => $newStatus]);
+            }
         });
-
-        // เช็คว่า "มีการส่งบ้างแล้ว" หรือไม่?
-        $hasSomeShipment = $order->items->sum('qty_shipped') > 0;
-
-        // 4. ตัดสินใจเปลี่ยนสถานะ (State Transition Logic)
-        $newStatus = null;
-
-        if ($isFullyShipped) {
-            $newStatus = OrderStatus::Completed->value;
-            Log::info("Sales: Order {$order->order_number} is FULLY SHIPPED -> Marked as COMPLETED.");
-        } elseif ($hasSomeShipment) {
-            $newStatus = OrderStatus::PartiallyShipped->value;
-            Log::info("Sales: Order {$order->order_number} is PARTIALLY SHIPPED -> Status updated.");
-        }
-
-        // 5. บันทึกผล
-        if ($newStatus && $newStatus !== $order->status) {
-            $order->update(['status' => $newStatus]);
-        }
     }
 }

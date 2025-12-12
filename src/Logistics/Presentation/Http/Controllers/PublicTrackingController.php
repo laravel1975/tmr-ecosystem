@@ -73,6 +73,6 @@ class PublicTrackingController extends Controller
     private function maskString($str) {
         $len = strlen($str);
         if ($len <= 4) return $str;
-        return substr($str, 0, 3) . '***' . substr($str, -2);
+        return mb_substr($str, 0, 3) . '***' . mb_substr($str, -2);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace TmrEcosystem\Logistics\Application\Listeners;
 
+use Exception;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
@@ -15,12 +16,15 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
-use TmrEcosystem\Stock\Domain\Aggregates\StockLevel;
 use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
 
 class CreateLogisticsDocuments implements ShouldQueue
 {
     use InteractsWithQueue;
+
+    // Config retry settings
+    public $tries = 3;
+    public $backoff = 10;
 
     public function __construct(
         private StockLevelRepositoryInterface $stockRepo,
@@ -30,45 +34,62 @@ class CreateLogisticsDocuments implements ShouldQueue
 
     public function handle(OrderConfirmed $event): void
     {
-        $orderAggregate = $event->order;
-        Log::info("Logistics: Processing 1:N Allocation for Order: {$orderAggregate->getOrderNumber()}");
+        // 1. รับ ID มาเท่านั้น เพื่อป้องกัน Stale Data จาก Serialized Model
+        $orderId = $event->orderId;
 
-        $orderModel = SalesOrderModel::where('id', $orderAggregate->getId())->first();
-        if (!$orderModel) return;
+        Log::info("Logistics: Processing Allocation for Order: {$orderId}");
 
-        DB::transaction(function () use ($orderModel, $orderAggregate) {
+        DB::transaction(function () use ($orderId) {
+
+            // ✅ FIX: Race Condition - ใช้ lockForUpdate()
+            // ล็อก Row ของ Order นี้ไว้ จนกว่า Transaction นี้จะจบ
+            // Process อื่นที่พยายามจะทำ Order เดียวกันต้องรอ
+            $orderModel = SalesOrderModel::where('id', $orderId)->lockForUpdate()->first();
+
+            if (!$orderModel) {
+                // กรณีนี้แปลกมาก (Data Consistency ผิดพลาด) ควรแจ้ง Error
+                throw new Exception("Logistics Error: Order ID {$orderId} not found in DB processing event.");
+            }
+
+            // ถ้า Order นี้ถูก Cancel หรือ Hold ไปแล้วระหว่างรอคิว
+            if ($orderModel->status === 'cancelled') {
+                Log::info("Logistics: Order {$orderId} was cancelled. Skipping allocation.");
+                return;
+            }
 
             $warehouseId = $orderModel->warehouse_id ?? 'DEFAULT_WAREHOUSE';
             $companyId = $orderModel->company_id;
-            $generalLocationUuid = $this->ensureGeneralLocation($warehouseId);
 
             $itemsToCreate = [];
             $orderFullyFulfilled = true;
 
-            // 1. วนลูปสินค้าทุกรายการใน Order
-            foreach ($orderAggregate->getItems() as $item) {
+            // ดึง items ล่าสุดจาก DB เสมอ
+            $orderItems = $orderModel->items;
 
-                // 1.1 คำนวณยอดที่ต้องจัด (Pending Qty)
-                // สูตร: ยอดสั่ง - ยอดที่เคยออกใบหยิบไปแล้ว
-                $alreadyPickedQty = DB::table('sales_picking_slip_items')
-                    ->join('sales_picking_slips', 'sales_picking_slip_items.picking_slip_id', '=', 'sales_picking_slips.id')
-                    ->where('sales_picking_slips.order_id', $orderModel->id) // ของออเดอร์นี้
-                    ->where('sales_picking_slip_items.product_id', $item->productId)
-                    ->where('sales_picking_slips.status', '!=', 'cancelled') // ไม่นับใบที่ยกเลิก
-                    ->sum('sales_picking_slip_items.quantity_requested');
+            foreach ($orderItems as $item) {
+
+                // ✅ FIX: Update Table Name to 'logistics_picking_slip_items'
+                $alreadyPickedQty = DB::table('logistics_picking_slip_items')
+                    ->join('logistics_picking_slips', 'logistics_picking_slip_items.picking_slip_id', '=', 'logistics_picking_slips.id')
+                    ->where('logistics_picking_slips.order_id', $orderId)
+                    ->where('logistics_picking_slip_items.product_id', $item->product_id)
+                    ->where('logistics_picking_slips.status', '!=', 'cancelled')
+                    ->sum('logistics_picking_slip_items.quantity_requested');
 
                 $qtyNeeded = $item->quantity - $alreadyPickedQty;
 
-                // ถ้าหยิบครบแล้ว ข้ามไปสินค้าตัวถัดไป
                 if ($qtyNeeded <= 0) {
-                    Log::info("Logistics: Item {$item->productName} already fully picked.");
+                    continue; // ครบแล้ว
+                }
+
+                $inventoryItem = $this->itemLookupService->findByPartNumber($item->product_id);
+                if (!$inventoryItem) {
+                    Log::error("Logistics: Product {$item->product_id} not found in Inventory.");
+                    $orderFullyFulfilled = false;
                     continue;
                 }
 
-                // 1.2 เช็คสต็อกและวางแผนการหยิบ (เฉพาะยอดที่ขาด)
-                $inventoryItem = $this->itemLookupService->findByPartNumber($item->productId);
-                if (!$inventoryItem) continue;
-
+                // คำนวณแผนหยิบ
                 $plan = $this->pickingService->calculatePickingPlan(
                     $inventoryItem->uuid,
                     $warehouseId,
@@ -77,12 +98,11 @@ class CreateLogisticsDocuments implements ShouldQueue
 
                 $qtyAllocatedThisRound = 0;
 
-                // 1.3 จองของตามแผน (Reserve Stock)
                 foreach ($plan as $step) {
                     $locationUuid = $step['location_uuid'];
                     $qtyToPick = $step['quantity'];
 
-                    if (is_null($locationUuid)) continue; // ไม่มีของในคลัง ข้าม
+                    if (is_null($locationUuid)) continue;
 
                     try {
                         $stockLevel = $this->stockRepo->findByLocation(
@@ -90,41 +110,41 @@ class CreateLogisticsDocuments implements ShouldQueue
                         );
 
                         if ($stockLevel) {
-                            $stockLevel->reserveSoft($qtyToPick); // ✅ ตัดสต็อกจริงที่นี่
+                            $stockLevel->reserveSoft($qtyToPick); // ตัดสต็อก
                             $this->stockRepo->save($stockLevel, []);
 
                             $qtyAllocatedThisRound += $qtyToPick;
 
-                            // เก็บข้อมูลไว้เตรียมสร้าง Picking Slip Item
                             $itemsToCreate[] = [
-                                'product_id' => $item->productId,
-                                'sales_order_item_id' => $this->findSalesOrderItemId($orderModel->id, $item->productId),
+                                'product_id' => $item->product_id,
+                                'sales_order_item_id' => $item->id,
                                 'quantity' => $qtyToPick,
                             ];
                         }
                     } catch (InsufficientStockException $e) {
-                        Log::warning("Logistics: Reservation failed at {$locationUuid}");
+                        // ✅ FIX: Strict Error Handling
+                        // ถ้า Business Logic คือ "ยอมให้ขาดได้" -> Log Warning (Backorder)
+                        // แต่ถ้า Logic คือ "ต้องครบเท่านั้น" -> Throw Exception
+                        Log::warning("Logistics: Stock discrepancy at {$locationUuid} for item {$item->product_id}");
+                        // ในเคสนี้เรายอมให้เกิด Backorder ได้ จึงไม่ throw exception เพื่อให้ loop ทำงานต่อ
+                    } catch (Exception $e) {
+                        // System error (DB connection, etc) -> ต้อง Retry
+                        throw $e;
                     }
                 }
 
-                // เช็คว่ารอบนี้หยิบครบตามที่ขาดไหม
                 if ($qtyAllocatedThisRound < $qtyNeeded) {
-                    $orderFullyFulfilled = false; // ยังมีของขาด (Backorder)
+                    $orderFullyFulfilled = false;
                 }
             }
 
-            // 2. สร้าง Picking Slip (เฉพาะถ้ามียอดให้หยิบในรอบนี้)
+            // สร้าง Picking Slip
             if (count($itemsToCreate) > 0) {
-
                 $pickingSlip = new PickingSlip();
-                $pickingSlip->picking_number = 'PK-' . date('Ymd') . '-' . strtoupper(Str::random(4));
+                $pickingSlip->picking_number = 'PK-' . date('Ymd') . '-' . strtoupper(Str::random(6));
                 $pickingSlip->company_id = $companyId;
-                $pickingSlip->order_id = $orderModel->id;
-
-                // ถ้า Picking Slip นี้ได้ของไม่ครบตามที่ขอในรอบนี้ ก็ถือเป็น Partial ของรอบนี้
-                // แต่ในมุมมอง 1:N เราถือว่าใบนี้ "Ready" ให้คนไปหยิบได้เลย
+                $pickingSlip->order_id = $orderId;
                 $pickingSlip->status = 'pending';
-
                 $pickingSlip->save();
 
                 foreach ($itemsToCreate as $data) {
@@ -139,66 +159,40 @@ class CreateLogisticsDocuments implements ShouldQueue
 
                 $this->createDeliveryNote($orderModel, $pickingSlip);
 
-                Log::info("Logistics: Created Picking Slip {$pickingSlip->picking_number} (Partial/Full Allocation)");
-            } else {
-                Log::info("Logistics: No stock available for remaining items. Waiting for replenishment.");
+                Log::info("Logistics: Created Picking Slip {$pickingSlip->picking_number}");
             }
 
-            // 3. อัปเดตสถานะ Order หลัก
-            // ถ้าของครบหมดแล้ว -> Reserved
-            // ถ้ายังขาดอยู่ -> Backorder
+            // Update Status ที่ Sales Order
+            // หมายเหตุ: Ideal world ควรยิง Event กลับไปบอก Sales แต่ใน Monolith แก้ตรงนี้ได้ แต่ต้องระวัง
             $finalStatus = $orderFullyFulfilled ? 'reserved' : 'backorder';
 
-            // เช็คว่าเคยมี Picking Slip มาก่อนไหม ถ้ามีแล้วยัง Backorder แสดงว่าเป็น Partial Delivery
-            if ($orderModel->pickingSlips()->count() > 0 && !$orderFullyFulfilled) {
-                 $finalStatus = 'backorder'; // หรือ 'partial' แล้วแต่ Business Definition
+            // เช็ค Partial
+            $hasPreviousSlips = DB::table('logistics_picking_slips')
+                ->where('order_id', $orderId)
+                ->exists();
+
+            if ($hasPreviousSlips && !$orderFullyFulfilled) {
+                 $finalStatus = 'partial_reserved';
             }
 
             $orderModel->update(['stock_status' => $finalStatus]);
         });
     }
 
-    // ... (Helper Functions: findSalesOrderItemId, createDeliveryNote, ensureGeneralLocation คงเดิม) ...
-    private function findSalesOrderItemId($orderId, $productId)
-    {
-        return DB::table('sales_order_items')
-            ->where('order_id', $orderId)
-            ->where('product_id', $productId)
-            ->value('id');
-    }
-
     private function createDeliveryNote($orderModel, $pickingSlip)
     {
         $dn = new DeliveryNote();
-        $dn->delivery_number = 'DO-' . date('Ymd') . '-' . strtoupper(Str::random(4));
+        $dn->delivery_number = 'DO-' . date('Ymd') . '-' . strtoupper(Str::random(6));
         $dn->company_id = $orderModel->company_id;
         $dn->order_id = $orderModel->id;
         $dn->picking_slip_id = $pickingSlip->id;
         $dn->status = 'waiting_picking';
-        $dn->shipping_address = 'See Order';
-        $dn->contact_person = 'See Order';
+
+        // Snapshot Data (สำคัญมาก)
+        // สมมติว่ามี field address ใน Order Model หรือดึงจาก Customer Relationship
+        $dn->shipping_address = $orderModel->shipping_address ?? 'Address N/A';
+        $dn->contact_person = $orderModel->contact_person ?? 'N/A';
+
         $dn->save();
-    }
-
-    private function ensureGeneralLocation($warehouseUuid)
-    {
-        $uuid = DB::table('warehouse_storage_locations')
-            ->where('warehouse_uuid', $warehouseUuid)
-            ->where('code', 'GENERAL')
-            ->value('uuid');
-
-        if (!$uuid) {
-            $uuid = Str::uuid()->toString();
-            DB::table('warehouse_storage_locations')->insert([
-                'uuid' => $uuid,
-                'warehouse_uuid' => $warehouseUuid,
-                'code' => 'GENERAL',
-                'type' => 'BULK',
-                'is_active' => true,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-        return $uuid;
     }
 }

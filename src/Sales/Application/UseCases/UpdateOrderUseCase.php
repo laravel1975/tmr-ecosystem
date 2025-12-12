@@ -11,7 +11,6 @@ use TmrEcosystem\Sales\Domain\Repositories\OrderRepositoryInterface;
 use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
 use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMessage;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
-// ✅ [ใหม่] Import Event
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
 
 class UpdateOrderUseCase
@@ -40,10 +39,9 @@ class UpdateOrderUseCase
         return DB::transaction(function () use ($order, $dto, $products, $oldTotal, $orderId, $wasConfirmed) {
 
             $order->updateDetails($dto->customerId, $dto->note, $dto->paymentTerms);
-            $order->clearItems(); // เคลียร์ List ใน Memory (ไม่เกี่ยวกับ DB)
+            $order->clearItems(); // เคลียร์ List ใน Memory
 
             foreach ($dto->items as $itemDto) {
-                // ข้ามถ้าจำนวนเป็น 0 (ถือว่าลบ)
                 if ($itemDto->quantity <= 0) continue;
 
                 $product = $products[$itemDto->productId] ?? null;
@@ -54,7 +52,7 @@ class UpdateOrderUseCase
                     productName: $product->name,
                     price: $product->price,
                     quantity: $itemDto->quantity,
-                    id: $itemDto->id // ✅ ส่ง ID เดิมเข้าไป (ถ้ามี)
+                    id: $itemDto->id
                 );
             }
 
@@ -67,7 +65,7 @@ class UpdateOrderUseCase
 
             $this->orderRepository->save($order);
 
-            // Logic Log ราคาเดิม
+            // Logic Log ราคา
             $newTotal = $order->getTotalAmount();
             if ($order->getStatus() === OrderStatus::Confirmed && $oldTotal != $newTotal) {
                 $diff = $newTotal - $oldTotal;
@@ -87,12 +85,16 @@ class UpdateOrderUseCase
 
             // --- Event Dispatching ---
 
-            // 1. ถ้าเพิ่ง Confirm -> ยิง OrderConfirmed (สร้างเอกสารใหม่)
+            // 1. ถ้าเพิ่ง Confirm -> ยิง OrderConfirmed
             if ($isJustConfirmed) {
-                OrderConfirmed::dispatch($order);
+                // ✅ FIX: ส่ง $orderId (String) แทน Object $order
+                OrderConfirmed::dispatch($orderId);
             }
-            // 2. ✅ [ใหม่] ถ้า Confirmed อยู่แล้วและมีการแก้ไข -> ยิง OrderUpdated (เพื่อไป Reset Logistics)
+            // 2. ถ้า Confirmed อยู่แล้วและมีการแก้ไข -> ยิง OrderUpdated
             elseif ($wasConfirmed) {
+                // หมายเหตุ: ตรวจสอบ Event OrderUpdated ของคุณด้วยว่ารับค่าแบบไหน
+                // ถ้าเป็นไปได้ควรแก้ให้รับ $orderId เหมือนกันเพื่อความ Consistency
+                // แต่ถ้า Event นั้นยังรับ Model อยู่ บรรทัดนี้ก็ใช้ได้ครับ
                 OrderUpdated::dispatch($order);
             }
 

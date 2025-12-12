@@ -8,15 +8,15 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('sales_delivery_notes', function (Blueprint $table) {
-            // เพิ่มคอลัมน์ note เอาไว้เก็บเหตุผลการยกเลิก หรือหมายเหตุอื่นๆ
+        // ✅ แก้ไข: ชี้ไปที่ logistics_delivery_notes
+        Schema::table('logistics_delivery_notes', function (Blueprint $table) {
             $table->text('note')->nullable()->after('status');
         });
     }
 
     public function down(): void
     {
-        Schema::table('sales_delivery_notes', function (Blueprint $table) {
+        Schema::table('logistics_delivery_notes', function (Blueprint $table) {
             $table->dropColumn('note');
         });
     }

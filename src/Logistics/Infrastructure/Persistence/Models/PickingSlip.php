@@ -12,7 +12,7 @@ class PickingSlip extends Model
 {
     use HasUuids;
 
-    protected $table = 'sales_picking_slips';
+    protected $table = 'logistics_picking_slips';
 
     protected $guarded = [];
 

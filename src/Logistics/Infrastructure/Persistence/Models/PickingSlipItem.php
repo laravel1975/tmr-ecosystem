@@ -7,7 +7,7 @@ use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderItemModel;
 
 class PickingSlipItem extends Model
 {
-    protected $table = 'sales_picking_slip_items';
+    protected $table = 'logistics_picking_slip_items';
     protected $guarded = [];
 
     public function salesOrderItem()

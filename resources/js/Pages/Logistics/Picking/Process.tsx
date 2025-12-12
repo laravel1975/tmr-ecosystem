@@ -256,7 +256,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                 <div className="text-right">
                                                     <span className="block text-xs text-gray-500 uppercase font-bold">Reserved</span>
                                                     <span className={cn("text-2xl font-bold", isStockEmpty ? "text-red-500" : "text-gray-900")}>
-                                                        {maxPickable}
+                                                        {Number(maxPickable).toLocaleString()}
                                                     </span>
                                                 </div>
                                             </div>

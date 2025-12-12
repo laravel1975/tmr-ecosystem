@@ -11,14 +11,20 @@ return new class extends Migration
         Schema::create('logistics_return_notes', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->string('return_number')->unique(); // RN-XXXXXX
-            $table->foreignUuid('order_id')->nullable(); // อ้างอิง Order
-            $table->foreignUuid('picking_slip_id')->nullable(); // อ้างอิงใบหยิบเดิม
-            // ✅ เพื่อผูกกับใบส่งของที่ถูกยกเลิก
+            $table->foreignUuid('order_id')->nullable(); // อ้างอิง Sales Order (ข้าม BC อนุโลมให้ใช้ ID ได้)
+
+            // ✅ แก้ไข: อ้างอิง Picking Slip ของ Logistics (เปลี่ยนชื่อตารางแล้ว)
+            $table->foreignUuid('picking_slip_id')
+                  ->nullable()
+                  ->constrained('logistics_picking_slips');
+
+            // ✅ แก้ไข: อ้างอิง Delivery Note ของ Logistics (เปลี่ยนชื่อตารางแล้ว)
             $table->foreignUuid('delivery_note_id')
                   ->nullable()
-                  ->constrained('sales_delivery_notes')
+                  ->constrained('logistics_delivery_notes')
                   ->onDelete('set null');
-            $table->string('status')->default('pending'); // pending (รอนำเก็บ), completed (เก็บแล้ว)
+
+            $table->string('status')->default('pending');
             $table->text('reason')->nullable();
             $table->timestamps();
         });

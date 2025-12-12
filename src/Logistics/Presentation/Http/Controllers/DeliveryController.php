@@ -13,7 +13,6 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Shipment;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNoteItem;
-// ✅ Use Service
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteCancelled;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteUpdated;
@@ -25,36 +24,40 @@ class DeliveryController extends Controller
     public function __construct(
         private StockLevelRepositoryInterface $stockRepo,
         private ItemLookupServiceInterface $itemLookupService,
-        private StockPickingService $pickingService // ✅ Inject Service
+        private StockPickingService $pickingService
     ) {}
 
     public function index(Request $request)
     {
         $query = DeliveryNote::query()
-            ->with(['order.customer', 'pickingSlip']) // Eager load picking slip
-            ->join('sales_orders', 'sales_delivery_notes.order_id', '=', 'sales_orders.id')
+            ->with(['order.customer', 'pickingSlip'])
+            // ✅ แก้ไข: เปลี่ยน sales_delivery_notes เป็น logistics_delivery_notes
+            ->join('sales_orders', 'logistics_delivery_notes.order_id', '=', 'sales_orders.id')
             ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
             ->select(
-                'sales_delivery_notes.*',
+                'logistics_delivery_notes.*',
                 'sales_orders.order_number',
                 'customers.name as customer_name'
             );
 
         if ($request->search) {
             $query->where(function ($q) use ($request) {
-                $q->where('sales_delivery_notes.delivery_number', 'like', "%{$request->search}%")
+                // ✅ แก้ไขชื่อตารางใน Where Clause
+                $q->where('logistics_delivery_notes.delivery_number', 'like', "%{$request->search}%")
                     ->orWhere('sales_orders.order_number', 'like', "%{$request->search}%")
                     ->orWhere('customers.name', 'like', "%{$request->search}%")
-                    ->orWhere('sales_delivery_notes.tracking_number', 'like', "%{$request->search}%");
+                    ->orWhere('logistics_delivery_notes.tracking_number', 'like', "%{$request->search}%");
             });
         }
 
         if ($request->status) {
-            $query->where('sales_delivery_notes.status', $request->status);
+            // ✅ แก้ไขชื่อตาราง
+            $query->where('logistics_delivery_notes.status', $request->status);
         }
 
-        $deliveries = $query->orderByRaw("CASE WHEN sales_delivery_notes.status = 'ready_to_ship' THEN 1 ELSE 2 END")
-            ->orderBy('sales_delivery_notes.created_at', 'desc')
+        // ✅ แก้ไขชื่อตารางใน Order By
+        $deliveries = $query->orderByRaw("CASE WHEN logistics_delivery_notes.status = 'ready_to_ship' THEN 1 ELSE 2 END")
+            ->orderBy('logistics_delivery_notes.created_at', 'desc')
             ->paginate(15)
             ->withQueryString()
             ->through(fn($dn) => [
@@ -67,7 +70,6 @@ class DeliveryController extends Controller
                 'carrier_name' => $dn->carrier_name,
                 'tracking_number' => $dn->tracking_number,
                 'created_at' => $dn->created_at->format('d/m/Y H:i'),
-                // เพิ่มข้อมูล Picking Ref ให้หน้าบ้านรู้ว่ามาจากใบหยิบไหน
                 'picking_ref' => $dn->pickingSlip->picking_number ?? '-',
             ]);
 
@@ -79,16 +81,13 @@ class DeliveryController extends Controller
 
     public function show(string $id)
     {
-        // 1. ดึง Delivery Note พร้อม Picking Slip Items (1:N Supported)
         $delivery = DeliveryNote::with([
             'order.customer',
-            'pickingSlip.items', // ดึง items ผ่าน pickingSlip
+            'pickingSlip.items',
             'shipment'
         ])->findOrFail($id);
 
-        // 2. Map Items จาก Picking Slip (เฉพาะของในกล่องนี้)
         $items = $delivery->pickingSlip->items->map(function ($pickItem) {
-            // ดึงข้อมูลสินค้า (Master Data)
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
 
             return [
@@ -97,11 +96,9 @@ class DeliveryController extends Controller
                 'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
                 'description' => $itemDto->description ?? '',
                 'barcode' => $itemDto ? ($itemDto->partNumber) : '',
-
-                'quantity_ordered' => (float)$pickItem->quantity_requested, // ยอดที่ขอให้หยิบในใบนี้
-                'qty_shipped' => (float)$pickItem->quantity_picked,       // ยอดที่หยิบได้จริง (ส่งจริง)
-
-                'unit_price' => 0, // ถ้าต้องการราคาต้องดึงจาก SalesOrderItem เพิ่ม
+                'quantity_ordered' => (float)$pickItem->quantity_requested,
+                'qty_shipped' => (float)$pickItem->quantity_picked,
+                'unit_price' => 0,
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
             ];
         });
@@ -172,19 +169,6 @@ class DeliveryController extends Controller
                     $updateData['carrier_name'] = $request->carrier_name;
                     $updateData['tracking_number'] = $request->tracking_number;
                 }
-
-                $warehouseUuid = $delivery->order->warehouse_id;
-                $pickingItems = $delivery->pickingSlip->items ?? [];
-
-                // ⚠️ แก้ไข: หา Location จาก PickingController ที่ commit ไว้แล้ว
-                // แต่เพื่อความง่าย เราจะตัดจาก GENERAL หรือ Location ที่ Picking Slip บันทึกไว้ (ถ้ามี)
-                // ในเฟสนี้เนื่องจาก PickingController ตัดสต็อกไปแล้ว (Out) ตอน Confirm Picking
-                // เราไม่ต้องตัดซ้ำที่นี่อีก! (Logic ที่ถูกต้องคือ Picking = ตัดของออกจากคลังไปวางที่จุดส่งของ, Delivery = เปลี่ยนสถานะเฉยๆ)
-
-                // แต่ถ้า Business Logic คือ Picking = จอง, Delivery = ตัดจริง
-                // โค้ดส่วนนี้ (StockPickingService::calculate...) ถึงจะจำเป็น
-                // จากบริบทก่อนหน้า PickingController::confirm เราได้ทำการ commitReservation (ตัดของ) ไปแล้ว
-                // ดังนั้นตรงนี้ควรอัปเดตแค่สถานะครับ
             }
 
             if ($request->status === 'delivered') {
@@ -193,7 +177,6 @@ class DeliveryController extends Controller
 
             $delivery->update($updateData);
 
-            // Update Shipment Status
             if ($delivery->shipment_id) {
                 $shipment = Shipment::with('deliveryNotes')->find($delivery->shipment_id);
 
@@ -218,7 +201,6 @@ class DeliveryController extends Controller
                 }
             }
 
-            // ✅ ส่ง Event บอกให้ระบบรู้ว่า Delivery Note มีการเปลี่ยนแปลง
             DeliveryNoteUpdated::dispatch($delivery);
         });
 
@@ -230,55 +212,43 @@ class DeliveryController extends Controller
     {
         $delivery = DeliveryNote::with(['pickingSlip.items'])->findOrFail($id);
 
-        // Allow cancellation for 'ready_to_ship' or 'shipped' (returned mid-way)
         if (!in_array($delivery->status, ['ready_to_ship', 'shipped'])) {
             return back()->with('error', 'สถานะเอกสารไม่สามารถยกเลิกได้');
         }
 
         DB::transaction(function () use ($delivery) {
-            // 1. Mark Delivery as Cancelled
             $delivery->update([
                 'status' => 'cancelled',
-                'shipment_id' => null, // ปลดออกจากรถขนส่ง
+                'shipment_id' => null,
                 'note' => $delivery->note . "\n[System] Cancelled & Returned"
             ]);
 
-            // 2. สร้าง Return Note (เพื่อรับของกลับเข้าคลัง)
             $returnNote = ReturnNote::create([
                 'return_number' => 'RN-' . date('Ymd') . '-' . rand(1000, 9999),
                 'order_id' => $delivery->order_id,
                 'picking_slip_id' => $delivery->picking_slip_id,
-                'delivery_note_id' => $delivery->id, // ผูกไว้หน่อยจะได้ตามรอยถูก
-                'status' => 'pending', // รอ QC ตรวจรับของคืน
+                'delivery_note_id' => $delivery->id,
+                'status' => 'pending',
                 'reason' => 'Delivery Cancelled / Failed Delivery'
             ]);
 
-            // 3. ✨ Logic สำคัญ: คืนยอด Shipped ใน Sales Order (เพื่อให้เปิดใบส่งใหม่ได้)
             foreach ($delivery->pickingSlip->items as $item) {
                 if ($item->quantity_picked > 0) {
-                    // 3.1 สร้างรายการใน Return Note
                     ReturnNoteItem::create([
                         'return_note_id' => $returnNote->id,
                         'product_id' => $item->product_id,
                         'quantity' => $item->quantity_picked
                     ]);
 
-                    // 3.2 🔴 ลดยอด Shipped ใน Sales Order กลับคืนมา!
-                    // เพื่อให้ Sales Order กลับสถานะเป็น "ค้างส่ง (Backorder/Partial)"
                     DB::table('sales_order_items')
                         ->where('id', $item->sales_order_item_id)
                         ->decrement('qty_shipped', $item->quantity_picked);
                 }
             }
 
-            // 4. Update Sales Order Status กลับไปเป็น Confirmed หรือ Partially Shipped
-            // เพื่อให้ระบบรู้ว่าต้อง process ใหม่
             $order = SalesOrderModel::find($delivery->order_id);
-            $order->update(['status' => 'partially_shipped']); // หรือ logic เช็คละเอียดอีกทีก็ได้
+            $order->update(['status' => 'partially_shipped']);
         });
-
-        // Trigger Event เพื่อให้ Stock Module รู้ว่ามี Return Note มารอรับของเข้า
-        // DeliveryNoteCancelled::dispatch($delivery);
 
         return to_route('logistics.return-notes.index')
             ->with('success', 'Delivery Cancelled. Order items reverted. Return Note created.');
@@ -291,9 +261,6 @@ class DeliveryController extends Controller
             'pickingSlip.items',
         ])->findOrFail($id);
 
-        // dd($delivery);
-
-        // Map items เฉพาะใน Picking Slip นี้
         $items = $delivery->pickingSlip->items->map(function ($pickItem) {
             $itemDto = $this->itemLookupService->findByPartNumber($pickItem->product_id);
 
@@ -303,12 +270,8 @@ class DeliveryController extends Controller
                 'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
                 'description' => $itemDto ? ($itemDto->description ?? '') : '',
                 'barcode' => $itemDto ? ($itemDto->barcode ?? $itemDto->partNumber) : '',
-
-                // ยอดที่ส่งจริงในรอบนี้
                 'qty_shipped' => (float)$pickItem->quantity_picked,
-                // ยอดที่ขอให้หยิบในรอบนี้
                 'quantity_ordered' => (float)$pickItem->quantity_requested,
-
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
             ];
         });

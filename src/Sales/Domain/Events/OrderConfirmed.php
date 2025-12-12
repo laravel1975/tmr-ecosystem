@@ -4,7 +4,6 @@ namespace TmrEcosystem\Sales\Domain\Events;
 
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
-use TmrEcosystem\Sales\Domain\Aggregates\Order;
 
 class OrderConfirmed
 {
@@ -12,8 +11,9 @@ class OrderConfirmed
 
     /**
      * Create a new event instance.
+     * เราส่งแค่ ID เพื่อลดขนาด Message และป้องกัน Stale Data
      */
     public function __construct(
-        public Order $order
+        public string $orderId
     ) {}
 }

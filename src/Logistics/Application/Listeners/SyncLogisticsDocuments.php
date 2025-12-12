@@ -130,7 +130,7 @@ class SyncLogisticsDocuments implements ShouldQueue
 
                 // อัปเดตสถานะ Picking Slip และ Order
                 $picking->update([
-                    'status' => $hasShortage ? 'partial' : 'ready',
+                    'status' => $hasShortage ? 'partial' : 'pending',
                     'note' => trim($picking->note . "\n[System] Updated: รายการเปลี่ยนแปลงเมื่อ " . now()),
                 ]);
 

@@ -11,7 +11,7 @@ class DeliveryNote extends Model
 {
     use HasUuids;
 
-    protected $table = 'sales_delivery_notes';
+    protected $table = 'logistics_delivery_notes';
 
     protected $guarded = [];
 
