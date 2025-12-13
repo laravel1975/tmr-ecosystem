@@ -6,15 +6,15 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Vehicle;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\Shipment;
-use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNoteItem;
+use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
-use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteCancelled;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteUpdated;
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
@@ -29,9 +29,9 @@ class DeliveryController extends Controller
 
     public function index(Request $request)
     {
+        // ... (โค้ดเดิม) ...
         $query = DeliveryNote::query()
             ->with(['order.customer', 'pickingSlip'])
-            // ✅ แก้ไข: เปลี่ยน sales_delivery_notes เป็น logistics_delivery_notes
             ->join('sales_orders', 'logistics_delivery_notes.order_id', '=', 'sales_orders.id')
             ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
             ->select(
@@ -42,7 +42,6 @@ class DeliveryController extends Controller
 
         if ($request->search) {
             $query->where(function ($q) use ($request) {
-                // ✅ แก้ไขชื่อตารางใน Where Clause
                 $q->where('logistics_delivery_notes.delivery_number', 'like', "%{$request->search}%")
                     ->orWhere('sales_orders.order_number', 'like', "%{$request->search}%")
                     ->orWhere('customers.name', 'like', "%{$request->search}%")
@@ -51,11 +50,9 @@ class DeliveryController extends Controller
         }
 
         if ($request->status) {
-            // ✅ แก้ไขชื่อตาราง
             $query->where('logistics_delivery_notes.status', $request->status);
         }
 
-        // ✅ แก้ไขชื่อตารางใน Order By
         $deliveries = $query->orderByRaw("CASE WHEN logistics_delivery_notes.status = 'ready_to_ship' THEN 1 ELSE 2 END")
             ->orderBy('logistics_delivery_notes.created_at', 'desc')
             ->paginate(15)
@@ -81,6 +78,7 @@ class DeliveryController extends Controller
 
     public function show(string $id)
     {
+         // ... (โค้ดเดิม) ...
         $delivery = DeliveryNote::with([
             'order.customer',
             'pickingSlip.items',
@@ -144,6 +142,9 @@ class DeliveryController extends Controller
         ]);
 
         DB::transaction(function () use ($delivery, $request) {
+            $oldStatus = $delivery->status;
+            $newStatus = $request->status;
+
             $updateData = [
                 'status' => $request->status,
             ];
@@ -201,6 +202,11 @@ class DeliveryController extends Controller
                 }
             }
 
+            // ✅ 2. [FIXED] ตัดสต๊อก (Hard Reserve -> Out) เมื่อเปลี่ยนสถานะเป็น Shipped หรือ Delivered
+            if (in_array($newStatus, ['shipped', 'delivered']) && !in_array($oldStatus, ['shipped', 'delivered'])) {
+                $this->deductStockForDelivery($delivery);
+            }
+
             DeliveryNoteUpdated::dispatch($delivery);
         });
 
@@ -208,8 +214,61 @@ class DeliveryController extends Controller
             ->with('success', 'Delivery status updated successfully!');
     }
 
+    /**
+     * Private Method: ตัดสต๊อก Hard Reserve ตามรายการใน Picking Slip
+     */
+    private function deductStockForDelivery(DeliveryNote $delivery): void
+    {
+        Log::info("Stock: Deducting for Delivery {$delivery->delivery_number}");
+
+        foreach ($delivery->pickingSlip->items as $item) {
+            $qtyToShip = $item->quantity_picked; // ยอดที่หยิบจริง
+            if ($qtyToShip <= 0) continue;
+
+            $inventoryItem = $this->itemLookupService->findByPartNumber($item->product_id);
+            if (!$inventoryItem) {
+                Log::error("Stock Error: Item {$item->product_id} not found.");
+                continue;
+            }
+
+            // 1. หา Stock Level ที่มี Hard Reserve (จาก Picking Process)
+            $reservedStocks = $this->stockRepo->findWithHardReserve($inventoryItem->uuid, $delivery->company_id);
+
+            $remainingToDeduct = $qtyToShip;
+
+            foreach ($reservedStocks as $stockLevel) {
+                if ($remainingToDeduct <= 0) break;
+
+                $reservedHere = $stockLevel->getQuantityReserved();
+
+                if ($reservedHere > 0) {
+                    // ตัดเท่าที่จำเป็น หรือเท่าที่มี
+                    $deductAmount = min($remainingToDeduct, $reservedHere);
+
+                    // เรียก Method shipReserved ใน Domain Model
+                    $stockLevel->shipReserved(
+                        $deductAmount,
+                        auth()->id(),
+                        "Delivery: " . $delivery->delivery_number
+                    );
+
+                    // ✅ [FIX] ส่ง Argument ให้ครบ 2 ตัว (Object, Events array)
+                    $this->stockRepo->save($stockLevel, []);
+
+                    $remainingToDeduct -= $deductAmount;
+                    Log::info("Stock: Deducted {$deductAmount} from {$stockLevel->getLocationUuid()}");
+                }
+            }
+
+            if ($remainingToDeduct > 0) {
+                Log::warning("Stock Warning: Could not find enough HARD RESERVE for {$item->product_id}. Missing: {$remainingToDeduct}.");
+            }
+        }
+    }
+
     public function cancelAndReturn(Request $request, string $id)
     {
+        // ... (โค้ดเดิม) ...
         $delivery = DeliveryNote::with(['pickingSlip.items'])->findOrFail($id);
 
         if (!in_array($delivery->status, ['ready_to_ship', 'shipped'])) {
@@ -256,6 +315,7 @@ class DeliveryController extends Controller
 
     public function reViewItem(string $id)
     {
+         // ... (โค้ดเดิม) ...
         $delivery = DeliveryNote::with([
             'order.customer',
             'pickingSlip.items',

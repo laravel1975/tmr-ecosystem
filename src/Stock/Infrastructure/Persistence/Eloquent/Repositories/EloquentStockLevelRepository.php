@@ -14,9 +14,32 @@ use TmrEcosystem\Stock\Application\DTOs\StockLevelIndexData;
 
 class EloquentStockLevelRepository implements StockLevelRepositoryInterface
 {
+    // ✅ 1. ประกาศ Property (ถ้าไม่ได้ extends BaseRepository)
+    // หรือถ้า extends BaseRepository ต้องดูว่า Parent ใช้ชื่อตัวแปรอะไร (ปกติคือ $model)
+    protected $model;
+
+    public function __construct(
+        StockLevelModel $model, // ✅ Inject Model
+        private StockLevelMapper $mapper
+    ) {
+        $this->model = $model; // ✅ Assign ให้ Property
+    }
+
     public function nextUuid(): string
     {
         return (string) Str::uuid();
+    }
+
+    public function findWithHardReserve(string $itemUuid, string $companyId): array
+    {
+        $models = $this->model
+            ->where('item_uuid', $itemUuid)
+            ->where('company_id', $companyId)
+            ->where('quantity_reserved', '>', 0) // หาที่มี Hard Reserve
+            ->orderBy('created_at', 'asc') // FIFO Strategy (หรือจะเปลี่ยนเป็น Expiry Date ก็ได้)
+            ->get();
+
+        return $models->map(fn($m) => $this->mapper->toDomain($m))->toArray();
     }
 
     public function findByLocation(string $itemUuid, string $locationUuid, string $companyId): ?StockLevel

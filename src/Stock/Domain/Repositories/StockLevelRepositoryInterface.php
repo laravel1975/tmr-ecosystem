@@ -48,7 +48,11 @@ interface StockLevelRepositoryInterface
      * * @return Collection|StockLevel[]
      */
     public function findPickableStocks(string $itemUuid, string $warehouseUuid): Collection;
-    
+
     // ✅ [เพิ่มบรรทัดนี้] ค้นหา StockLevel ที่มีการจองแบบ Soft Reserve ค้างอยู่
     public function findWithSoftReserve(string $itemUuid, string $warehouseUuid): iterable;
+
+    // ✅ [เพิ่ม] ค้นหา Stock Level ที่มี Hard Reserve ของสินค้านี้ (เพื่อเตรียมตัดของ)
+    /** @return StockLevel[] */
+    public function findWithHardReserve(string $itemUuid, string $companyId): array;
 }
