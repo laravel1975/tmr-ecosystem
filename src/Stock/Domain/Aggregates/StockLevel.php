@@ -45,6 +45,7 @@ class StockLevel
 
     public function getAvailableQuantity(): float
     {
+        // ต้องใช้ camelCase ทั้งหมด
         return $this->quantityOnHand - ($this->quantityReserved + $this->quantitySoftReserved);
     }
 
@@ -128,14 +129,21 @@ class StockLevel
         $this->quantityReserved += $quantityToReserve;
     }
 
-    // --- Soft Reserve Logic ---
-
+    /**
+     * จองสินค้า (Soft Reserve)
+     */
     public function reserveSoft(float $quantity): void
     {
         if ($quantity <= 0) return;
+
+        // 1. เช็คก่อนว่ามีของพอให้จองหรือไม่ (Available = Hand - Reserved - SoftReserved)
         if ($this->getAvailableQuantity() < $quantity) {
-            throw new InsufficientStockException("Stock not available for soft reservation.");
+             throw new InsufficientStockException(
+                 "Stock insufficient. Available: {$this->getAvailableQuantity()}, Requested: {$quantity}"
+             );
         }
+
+        // 2. ✅ แก้ไข: ใช้ camelCase (quantitySoftReserved) ให้ตรงกับที่ประกาศไว้บนหัว Class
         $this->quantitySoftReserved += $quantity;
     }
 

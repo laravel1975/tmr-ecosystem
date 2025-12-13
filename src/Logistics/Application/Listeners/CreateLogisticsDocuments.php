@@ -42,8 +42,6 @@ class CreateLogisticsDocuments implements ShouldQueue
         DB::transaction(function () use ($orderId) {
 
             // ✅ FIX: Race Condition - ใช้ lockForUpdate()
-            // ล็อก Row ของ Order นี้ไว้ จนกว่า Transaction นี้จะจบ
-            // Process อื่นที่พยายามจะทำ Order เดียวกันต้องรอ
             $orderModel = SalesOrderModel::where('id', $orderId)->lockForUpdate()->first();
 
             if (!$orderModel) {
@@ -110,6 +108,14 @@ class CreateLogisticsDocuments implements ShouldQueue
                         );
 
                         if ($stockLevel) {
+                            // ✅ FIX: Pre-check availability เพื่อป้องกันบั๊ก "Half Stock" ใน reserveSoft
+                            // ถ้ามีของน้อยกว่าที่ต้องการ ให้ข้ามไปเลย (ถือว่าของขาด)
+                            // หรือปรับยอดที่จะหยิบให้เท่าที่มี ($qtyToPick = min($qtyToPick, $stockLevel->getAvailableQuantity()))
+                            if ($stockLevel->getAvailableQuantity() < $qtyToPick) {
+                                Log::warning("Logistics: Skipping allocation. Stock mismatch at {$locationUuid}. Needed: {$qtyToPick}, Available: " . $stockLevel->getAvailableQuantity());
+                                continue;
+                            }
+
                             $stockLevel->reserveSoft($qtyToPick); // ตัดสต็อก
                             $this->stockRepo->save($stockLevel, []);
 
@@ -123,10 +129,8 @@ class CreateLogisticsDocuments implements ShouldQueue
                         }
                     } catch (InsufficientStockException $e) {
                         // ✅ FIX: Strict Error Handling
-                        // ถ้า Business Logic คือ "ยอมให้ขาดได้" -> Log Warning (Backorder)
-                        // แต่ถ้า Logic คือ "ต้องครบเท่านั้น" -> Throw Exception
-                        Log::warning("Logistics: Stock discrepancy at {$locationUuid} for item {$item->product_id}");
-                        // ในเคสนี้เรายอมให้เกิด Backorder ได้ จึงไม่ throw exception เพื่อให้ loop ทำงานต่อ
+                        // จับ Exception ไว้ เพื่อไม่ให้ Job พัง แต่ Log ไว้ตรวจสอบ
+                        Log::warning("Logistics: Insufficient Stock Exception at {$locationUuid}: " . $e->getMessage());
                     } catch (Exception $e) {
                         // System error (DB connection, etc) -> ต้อง Retry
                         throw $e;
@@ -163,7 +167,6 @@ class CreateLogisticsDocuments implements ShouldQueue
             }
 
             // Update Status ที่ Sales Order
-            // หมายเหตุ: Ideal world ควรยิง Event กลับไปบอก Sales แต่ใน Monolith แก้ตรงนี้ได้ แต่ต้องระวัง
             $finalStatus = $orderFullyFulfilled ? 'reserved' : 'backorder';
 
             // เช็ค Partial
@@ -189,7 +192,6 @@ class CreateLogisticsDocuments implements ShouldQueue
         $dn->status = 'waiting_picking';
 
         // Snapshot Data (สำคัญมาก)
-        // สมมติว่ามี field address ใน Order Model หรือดึงจาก Customer Relationship
         $dn->shipping_address = $orderModel->shipping_address ?? 'Address N/A';
         $dn->contact_person = $orderModel->contact_person ?? 'N/A';
 
