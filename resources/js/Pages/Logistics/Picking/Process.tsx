@@ -4,7 +4,7 @@ import { PageProps } from '@/types';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 
 // UI Components
-import { Card, CardHeader, CardTitle, CardContent } from '@/Components/ui/card';
+import { Card, CardContent } from '@/Components/ui/card';
 import { Button } from '@/Components/ui/button';
 import { Input } from '@/Components/ui/input';
 import { Badge } from '@/Components/ui/badge';
@@ -15,11 +15,11 @@ import { cn } from '@/lib/utils';
 
 import { useBarcodeScanner } from '@/Hooks/useBarcodeScanner';
 
-// Types (Updated for Smart Reservation)
+// Types
 interface PickingSuggestion {
     location_uuid: string;
     location_code: string;
-    quantity: number;
+    quantity: number | string; // Backend อาจส่ง string format มา
 }
 
 interface PickingItem {
@@ -31,7 +31,7 @@ interface PickingItem {
     qty_picked: number;
     is_completed: boolean;
     image_url?: string;
-    picking_suggestions: PickingSuggestion[]; // แผนการหยิบจาก Smart Reserve
+    picking_suggestions: PickingSuggestion[];
 }
 
 interface PickingSlip {
@@ -49,6 +49,7 @@ interface Props extends PageProps {
 
 export default function Process({ auth, pickingSlip, items }: Props) {
 
+    // Initialize state with previously picked quantities
     const [pickedData, setPickedData] = useState<Record<number, number>>(() => {
         const initialData: Record<number, number> = {};
         items.forEach(item => {
@@ -60,12 +61,13 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     const [lastScanned, setLastScanned] = useState<{ name: string, status: 'success' | 'error' } | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // --- Helper: คำนวณยอดที่หยิบได้จริง (Available to Pick) จาก Smart Reservation ---
-    const getMaxPickable = (item: PickingItem) => {
+    // --- Helper: คำนวณยอดที่ต้องหยิบ (Picking Target) ---
+    // ยึดตาม Picking Suggestion ที่ Backend ส่งมา (ซึ่งผ่านการ Cap ยอด min() มาแล้ว)
+    const getTargetQty = (item: PickingItem) => {
         if (!item.picking_suggestions || item.picking_suggestions.length === 0) return 0;
 
-        // รวมยอดจากทุก Location ที่ถูกจองไว้ให้
-        return item.picking_suggestions.reduce((sum, s) => sum + s.quantity, 0);
+        // แปลงเป็น number ก่อนบวก (กันเหนียวเพราะบางที backend ส่ง string '20.00')
+        return item.picking_suggestions.reduce((sum, s) => sum + Number(s.quantity), 0);
     };
 
     // --- 📡 BARCODE SCANNER LOGIC ---
@@ -77,31 +79,31 @@ export default function Process({ auth, pickingSlip, items }: Props) {
 
         if (targetItem) {
             const currentQty = pickedData[targetItem.id] || 0;
-            const maxPickable = getMaxPickable(targetItem);
+            const targetQty = getTargetQty(targetItem);
 
-            if (currentQty >= maxPickable) {
-                setLastScanned({ name: `Max Reached: ${targetItem.product_name}`, status: 'error' });
+            if (currentQty >= targetQty) {
+                setLastScanned({ name: `Already Complete: ${targetItem.product_name}`, status: 'error' });
             } else {
                 setPickedData(prev => ({
                     ...prev,
                     [targetItem.id]: (prev[targetItem.id] || 0) + 1
                 }));
-                setLastScanned({ name: `Picked: ${targetItem.product_name}`, status: 'success' });
+                setLastScanned({ name: `Scanned: ${targetItem.product_name}`, status: 'success' });
             }
         } else {
-            setLastScanned({ name: `Not found: ${code}`, status: 'error' });
+            setLastScanned({ name: `Product not found: ${code}`, status: 'error' });
         }
 
-        setTimeout(() => setLastScanned(null), 3000);
+        setTimeout(() => setLastScanned(null), 2500);
 
     }, [items, pickedData]);
 
     useBarcodeScanner(handleScan);
 
-    // Update Local State (Manual Input)
+    // Manual Input Handler
     const handleQtyChange = (itemId: number, val: string, maxLimit: number) => {
         const num = parseFloat(val);
-        // ✅ Limit value to maxPickable (Smart Reserve Limit)
+        // Allow user to clear input (NaN -> 0), but don't exceed maxLimit
         const safeNum = isNaN(num) ? 0 : Math.min(num, maxLimit);
 
         setPickedData(prev => ({
@@ -110,7 +112,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
         }));
     };
 
-    // Auto Fill
+    // Auto Fill Button
     const handleAutoFill = (item: PickingItem, maxLimit: number) => {
         setPickedData(prev => ({
             ...prev,
@@ -119,24 +121,29 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     };
 
     const handleSubmit = () => {
-        const isAllComplete = items.every(item => {
-             const max = getMaxPickable(item);
-             return (pickedData[item.id] || 0) >= max;
+        // Validation: Check if everything matches the reservation target
+        const incompleteItems = items.filter(item => {
+             const target = getTargetQty(item);
+             const picked = pickedData[item.id] || 0;
+             return picked < target;
         });
 
-        const confirmMsg = isAllComplete
-            ? 'All reserved items picked. Confirm to finish?'
-            : 'Some items are missing/incomplete. Confirm partial picking?';
+        let confirmMsg = 'All items picked according to reservation. Confirm?';
+
+        if (incompleteItems.length > 0) {
+            confirmMsg = `⚠️ You have ${incompleteItems.length} incomplete items.\n\nUnpicked items will be released back to stock or backordered.\n\nProceed?`;
+        }
 
         if (!confirm(confirmMsg)) return;
 
         setIsSubmitting(true);
+
         const payload = {
             items: Object.entries(pickedData).map(([id, qty]) => ({
                 id: parseInt(id),
                 qty_picked: qty
             })),
-            create_backorder: true
+            create_backorder: true // Default to true (Business Logic decision)
         };
 
         router.post(route('logistics.picking.confirm', pickingSlip.id), payload, {
@@ -148,34 +155,38 @@ export default function Process({ auth, pickingSlip, items }: Props) {
         <AuthenticatedLayout
             user={auth.user}
             header={
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
                         <Link href={route('logistics.picking.index')}>
-                            <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon"><ArrowLeft className="h-5 w-5" /></Button>
                         </Link>
                         <div>
-                            <h2 className="font-semibold text-xl text-gray-800 leading-tight flex items-center gap-2">
-                                Picking : {pickingSlip.picking_number}
-                                <Badge variant="outline" className="ml-2 animate-pulse bg-green-50 text-green-700 border-green-200">
-                                    <ScanBarcode className="w-3 h-3 mr-1" /> Scanner Ready
+                            <h2 className="font-bold text-2xl text-gray-800 leading-tight flex items-center gap-2">
+                                {pickingSlip.picking_number}
+                                <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-200 border-0">
+                                    <ScanBarcode className="w-3 h-3 mr-1" /> Scan Ready
                                 </Badge>
                             </h2>
-                            <p className="text-sm text-gray-500">Order: {pickingSlip.order_number} | Customer: {pickingSlip.customer_name}</p>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Order: <span className="font-mono font-medium text-gray-700">{pickingSlip.order_number}</span> •
+                                {pickingSlip.customer_name}
+                            </p>
                         </div>
                     </div>
-                    <div className="flex gap-2">
-                        <Button variant="outline" asChild>
+
+                    <div className="flex gap-2 w-full sm:w-auto">
+                        <Button variant="outline" className="flex-1 sm:flex-none" asChild>
                             <a href={route('logistics.picking.pdf', pickingSlip.id)} target="_blank">
-                                <Printer className="mr-2 h-4 w-4" /> Print Slip
+                                <Printer className="mr-2 h-4 w-4" /> Print
                             </a>
                         </Button>
                         {pickingSlip.status !== 'done' && (
                             <Button
-                                className="bg-green-600 hover:bg-green-700"
+                                className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg transition-all"
                                 onClick={handleSubmit}
                                 disabled={isSubmitting}
                             >
-                                <Save className="mr-2 h-4 w-4" /> Confirm Picking
+                                <Save className="mr-2 h-4 w-4" /> Confirm
                             </Button>
                         )}
                     </div>
@@ -184,147 +195,160 @@ export default function Process({ auth, pickingSlip, items }: Props) {
         >
             <Head title={`Pick ${pickingSlip.picking_number}`} />
 
-            {/* Toast Feedback */}
+            {/* Notification Toast */}
             {lastScanned && (
                 <div className={cn(
-                    "fixed top-20 right-4 z-50 px-6 py-4 rounded-lg shadow-lg border flex items-center gap-3 transition-all duration-300 transform translate-y-0 opacity-100",
+                    "fixed top-24 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl border flex items-center gap-4 transition-all duration-500 animate-in slide-in-from-right-10",
                     lastScanned.status === 'success' ? "bg-green-600 text-white border-green-700" : "bg-red-600 text-white border-red-700"
                 )}>
-                    {lastScanned.status === 'success' ? <CheckCircle2 className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+                    <div className="p-2 bg-white/20 rounded-full">
+                        {lastScanned.status === 'success' ? <CheckCircle2 className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+                    </div>
                     <div>
-                        <p className="font-bold text-lg">{lastScanned.status === 'success' ? 'Scanned!' : 'Error!'}</p>
-                        <p className="text-sm opacity-90">{lastScanned.name}</p>
+                        <p className="font-bold text-lg">{lastScanned.status === 'success' ? 'Success' : 'Error'}</p>
+                        <p className="text-sm text-white/90 font-medium">{lastScanned.name}</p>
                     </div>
                 </div>
             )}
 
             <div className="py-8 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-
-                <div className="space-y-6">
+                <div className="grid gap-6">
                     {items.map((item) => {
                         const currentPicked = pickedData[item.id] || 0;
 
-                        // ✅ 1. คำนวณยอดที่หยิบได้จริง (ตาม Stock ที่จองไว้)
-                        const maxPickable = getMaxPickable(item);
-                        const isStockEmpty = maxPickable === 0;
+                        // Calculated Target from Backend Suggestions
+                        const targetQty = getTargetQty(item);
 
-                        const isFullyPicked = currentPicked >= maxPickable && maxPickable > 0;
+                        const isStockAvailable = targetQty > 0;
+                        const isCompleted = currentPicked >= targetQty && isStockAvailable;
                         const isJustScanned = lastScanned?.name.includes(item.product_name) && lastScanned?.status === 'success';
+
+                        // Calculate Progress Percentage
+                        const progress = isStockAvailable ? Math.min((currentPicked / targetQty) * 100, 100) : 0;
 
                         return (
                             <Card
                                 key={item.id}
                                 className={cn(
-                                    "border-l-4 shadow-sm transition-all duration-300",
-                                    isFullyPicked ? "border-l-green-500 bg-green-50/10" : "border-l-orange-400",
-                                    isJustScanned ? "ring-2 ring-green-500 scale-[1.02]" : "",
-                                    isStockEmpty && "opacity-75 bg-gray-50 border-l-gray-300"
+                                    "overflow-hidden transition-all duration-300 border-l-4",
+                                    isCompleted
+                                        ? "border-l-green-500 bg-white opacity-80"
+                                        : isStockAvailable
+                                            ? "border-l-blue-500 shadow-md transform hover:-translate-y-1"
+                                            : "border-l-gray-300 bg-gray-50 opacity-60"
                                 )}
                             >
-                                <CardContent className="p-6">
-                                    <div className="flex flex-col md:flex-row gap-6">
-
-                                        <div className="flex-shrink-0">
-                                            {item.image_url ? (
-                                                <ImageViewer
-                                                    images={[item.image_url]}
-                                                    alt={item.product_name}
-                                                    className="w-24 h-24 rounded-lg border object-contain bg-white"
-                                                />
-                                            ) : (
-                                                <div className="w-24 h-24 rounded-lg border bg-gray-100 flex items-center justify-center text-gray-300">
-                                                    <Package className="w-10 h-10" />
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="flex-1 space-y-2">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                                                        {item.product_name}
-                                                        {isFullyPicked && <CheckCircle2 className="w-5 h-5 text-green-600" />}
-                                                    </h3>
-                                                    <p className="text-sm font-mono text-blue-600">{item.product_id}</p>
-                                                    <div className="flex items-center gap-2 mt-1">
-                                                        <ScanBarcode className="w-4 h-4 text-gray-400" />
-                                                        <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-600 tracking-wider">
-                                                            {item.barcode || 'NO BARCODE'}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className="block text-xs text-gray-500 uppercase font-bold">Reserved</span>
-                                                    <span className={cn("text-2xl font-bold", isStockEmpty ? "text-red-500" : "text-gray-900")}>
-                                                        {Number(maxPickable).toLocaleString()}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <Separator className="my-3" />
-
-                                            <div className="bg-slate-50 rounded-md p-3 border border-slate-200">
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <MapPin className="w-4 h-4 text-blue-500" />
-                                                    <span className="text-sm font-bold text-gray-700">Pick From (Reserved)</span>
-                                                </div>
-
-                                                {item.picking_suggestions && item.picking_suggestions.length > 0 ? (
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {item.picking_suggestions.map((sug, idx) => (
-                                                            <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-mono bg-white border-blue-200 text-blue-800 shadow-sm">
-                                                                <span className="font-bold">{sug.location_code}</span>
-                                                                <Badge variant="secondary" className="h-5 px-1.5 bg-blue-100 text-blue-800 hover:bg-blue-200">
-                                                                    x {sug.quantity}
-                                                                </Badge>
-                                                            </div>
-                                                        ))}
-                                                    </div>
+                                <CardContent className="p-0">
+                                    <div className="flex flex-col md:flex-row">
+                                        {/* Left: Image & Info */}
+                                        <div className="p-5 flex-1 flex gap-5">
+                                            <div className="relative group">
+                                                {item.image_url ? (
+                                                    <ImageViewer
+                                                        images={[item.image_url]}
+                                                        alt={item.product_name}
+                                                        className="w-28 h-28 rounded-xl border border-gray-200 object-contain bg-white shadow-sm group-hover:scale-105 transition-transform"
+                                                    />
                                                 ) : (
-                                                    <p className="text-sm text-red-500 flex items-center italic">
-                                                        <AlertCircle className="w-4 h-4 mr-1" /> No stock reserved
-                                                    </p>
+                                                    <div className="w-28 h-28 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-300">
+                                                        <Package className="w-10 h-10" />
+                                                    </div>
+                                                )}
+                                                {isCompleted && (
+                                                    <div className="absolute inset-0 bg-green-500/20 rounded-xl flex items-center justify-center backdrop-blur-[1px]">
+                                                        <CheckCircle2 className="w-10 h-10 text-green-600 drop-shadow-md" />
+                                                    </div>
                                                 )}
                                             </div>
-                                        </div>
 
-                                        {/* Picking Input Area */}
-                                        <div className="flex flex-col justify-center items-end gap-3 min-w-[150px] border-l pl-6 md:pl-0 md:border-l-0">
-                                            <div className="text-right w-full">
-                                                <label className="text-xs font-bold text-gray-500 mb-1 block">ACTUAL PICKED</label>
-                                                <div className="flex items-center gap-2 relative">
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        max={maxPickable} // ✅ 2. จำกัด Max ที่ยอดที่จองไว้
-                                                        value={currentPicked}
-                                                        onChange={(e) => handleQtyChange(item.id, e.target.value, maxPickable)}
-                                                        className={cn(
-                                                            "text-right font-bold text-2xl h-14 w-full",
-                                                            isFullyPicked ? "text-green-600 border-green-500 bg-green-50 ring-2 ring-green-200" : "text-gray-800",
-                                                            isStockEmpty ? "bg-gray-100 text-gray-400 cursor-not-allowed" : ""
-                                                        )}
-                                                        disabled={pickingSlip.status === 'done' || isStockEmpty}
-                                                    />
-                                                    {isJustScanned && (
-                                                        <Zap className="absolute -right-8 w-6 h-6 text-yellow-500 animate-ping" />
+                                            <div className="flex-1 min-w-0 py-1">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <h3 className="text-lg font-bold text-gray-900 truncate pr-2">{item.product_name}</h3>
+                                                    {isJustScanned && <Badge className="bg-yellow-400 text-yellow-900 hover:bg-yellow-500">Just Scanned</Badge>}
+                                                </div>
+
+                                                <p className="text-sm font-mono text-blue-600 font-medium mb-3">{item.product_id}</p>
+
+                                                <div className="flex flex-wrap gap-2 mb-4">
+                                                    <Badge variant="outline" className="bg-gray-50 text-gray-600 border-gray-200 font-mono">
+                                                        <ScanBarcode className="w-3 h-3 mr-1" />
+                                                        {item.barcode || 'N/A'}
+                                                    </Badge>
+                                                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                                        Ordered: {item.qty_ordered}
+                                                    </Badge>
+                                                </div>
+
+                                                {/* Suggestions (Locations) */}
+                                                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Pick From</span>
+                                                    </div>
+
+                                                    {item.picking_suggestions && item.picking_suggestions.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {item.picking_suggestions.map((sug, idx) => (
+                                                                <div key={idx} className="flex items-center pl-2 pr-1 py-1 rounded-md border bg-white border-blue-100 shadow-sm">
+                                                                    <span className="text-sm font-bold text-slate-700 mr-2 font-mono">{sug.location_code}</span>
+                                                                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 border-0 h-5 px-1.5 min-w-[2rem] justify-center">
+                                                                        {Number(sug.quantity)}
+                                                                    </Badge>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm text-red-500 flex items-center font-medium italic">
+                                                            <AlertCircle className="w-4 h-4 mr-1" /> Not Allocated / Out of Stock
+                                                        </p>
                                                     )}
                                                 </div>
                                             </div>
+                                        </div>
 
-                                            {pickingSlip.status !== 'done' && !isFullyPicked && !isStockEmpty && (
+                                        {/* Right: Actions & Input */}
+                                        <div className="bg-gray-50 border-t md:border-t-0 md:border-l border-gray-100 p-5 flex flex-col justify-center w-full md:w-48 gap-3">
+
+                                            <div className="text-center">
+                                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Target</span>
+                                                <span className={cn("text-3xl font-black tracking-tight", isStockAvailable ? "text-gray-800" : "text-gray-300")}>
+                                                    {targetQty}
+                                                </span>
+                                            </div>
+
+                                            <div className="relative">
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    max={targetQty}
+                                                    value={currentPicked}
+                                                    onChange={(e) => handleQtyChange(item.id, e.target.value, targetQty)}
+                                                    className={cn(
+                                                        "text-center font-bold text-lg h-12 transition-all",
+                                                        isCompleted ? "border-green-500 text-green-700 bg-green-50" : "focus:border-blue-500"
+                                                    )}
+                                                    disabled={!isStockAvailable || pickingSlip.status === 'done'}
+                                                />
+                                                {/* Progress Bar */}
+                                                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200 rounded-b-md overflow-hidden">
+                                                    <div
+                                                        className={cn("h-full transition-all duration-500", isCompleted ? "bg-green-500" : "bg-blue-500")}
+                                                        style={{ width: `${progress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {!isCompleted && isStockAvailable && pickingSlip.status !== 'done' && (
                                                 <Button
-                                                    variant="ghost"
                                                     size="sm"
-                                                    className="w-full text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                                    onClick={() => handleAutoFill(item, maxPickable)}
+                                                    variant="secondary"
+                                                    className="w-full text-xs font-bold"
+                                                    onClick={() => handleAutoFill(item, targetQty)}
                                                 >
-                                                    <CheckCircle2 className="w-4 h-4 mr-1" />
                                                     Pick All
                                                 </Button>
                                             )}
                                         </div>
-
                                     </div>
                                 </CardContent>
                             </Card>
@@ -332,6 +356,12 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                     })}
                 </div>
 
+                {items.length === 0 && (
+                    <div className="text-center py-12 bg-white rounded-lg border border-dashed">
+                        <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-500">No items found in this picking slip.</p>
+                    </div>
+                )}
             </div>
         </AuthenticatedLayout>
     );

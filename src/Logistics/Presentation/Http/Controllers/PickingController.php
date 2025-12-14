@@ -5,6 +5,7 @@ namespace TmrEcosystem\Logistics\Presentation\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
@@ -97,19 +98,27 @@ class PickingController extends Controller
             $suggestions = [];
 
             if ($itemDto && $pickingSlip->status !== 'done' && $warehouseUuid) {
+                // ดึง Stock Level ทั้งหมดที่มีการจอง (ยอดรวม Global ของทุกออร์เดอร์)
                 $reservedStocks = $this->stockRepo->findWithSoftReserve($itemDto->uuid, $warehouseUuid);
 
-                // ✅ เพิ่ม: ตัวแปรช่วยนับยอดที่ต้องการ
-                $remainingToFind = $pickItem->quantity_requested;
+                // ✅ [แก้ไข 1] ตั้งต้นยอดที่ต้องหา สำหรับ "Picking Slip ใบนี้เท่านั้น"
+                $remainingToFind = $pickItem->quantity_requested - $pickItem->quantity_picked;
 
                 foreach ($reservedStocks as $stock) {
-                    if ($remainingToFind <= 0) break; // ถ้าครบแล้ว หยุดหา
+                    if ($remainingToFind <= 0) break; // ถ้าครบยอดของใบนี้แล้ว หยุดทันที (ไม่สนว่า Global จะเหลือเท่าไหร่)
 
-                    $reservedInLoc = $stock->getQuantitySoftReserved();
+                    $reservedGlobal = $stock->getQuantitySoftReserved(); // ยอดจองรวมใน DB (เช่น 35)
 
-                    if ($reservedInLoc > 0) {
-                        // ✅ แก้ไข: แสดงยอดแค่เท่าที่ Order นี้ต้องการ (ไม่เกินยอดที่มี)
-                        $showQty = min($reservedInLoc, $remainingToFind);
+                    if ($reservedGlobal > 0) {
+                        // ✅ [แก้ไข 2] ตัดยอดแสดงผล: เอาค่าน้อยสุด เพื่อไม่ให้ตัวเลขเกินความต้องการของใบนี้
+                        // เช่น มี 35 แต่ใบนี้ขอ 20 -> โชว์ 20
+                        $showQty = min($reservedGlobal, $remainingToFind);
+
+                        // จัด Format ตัวเลข
+                        $formattedQty = number_format($showQty, 2);
+                        if (floor($showQty) == $showQty) {
+                             $formattedQty = number_format($showQty, 0);
+                        }
 
                         $locationCode = DB::table('warehouse_storage_locations')
                             ->where('uuid', $stock->getLocationUuid())
@@ -118,10 +127,10 @@ class PickingController extends Controller
                         $suggestions[] = [
                             'location_uuid' => $stock->getLocationUuid(),
                             'location_code' => $locationCode ?? 'UNKNOWN',
-                            'quantity' => $showQty // ใช้ยอดที่คำนวณใหม่
+                            'quantity' => $formattedQty
                         ];
 
-                        // หักยอดที่หาเจอแล้วออกจากยอดที่ต้องการ
+                        // ✅ [แก้ไข 3] หักยอดที่หาได้ออกจากโควตาของใบนี้
                         $remainingToFind -= $showQty;
                     }
                 }
@@ -178,6 +187,7 @@ class PickingController extends Controller
                 $submitted = $submittedItems->firstWhere('id', $item->id);
                 $qtyPickedActual = $submitted ? (float)$submitted['qty_picked'] : 0;
 
+                // 1. Commit Stock (Hard Reserve) สำหรับยอดที่หยิบได้
                 if ($qtyPickedActual > 0) {
                     $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
 
@@ -198,10 +208,11 @@ class PickingController extends Controller
                     }
                 }
 
+                // 2. Release Stock (คืนสต๊อกจอง) สำหรับยอดที่หยิบไม่ได้ (เพื่อเตรียมสร้าง Backorder ใหม่ หรือปล่อยให้คนอื่น)
                 $qtyUnpicked = $item->quantity_requested - $qtyPickedActual;
                 if ($qtyUnpicked > 0) {
-                     $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
-                     if ($inventoryItemDto && $warehouseUuid) {
+                      $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
+                      if ($inventoryItemDto && $warehouseUuid) {
                         $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItemDto->uuid, $warehouseUuid);
                         $releaseRemaining = $qtyUnpicked;
                         foreach ($reservedStocks as $stockLevel) {
@@ -211,7 +222,7 @@ class PickingController extends Controller
                              $this->stockRepo->save($stockLevel, []);
                              $releaseRemaining -= $releaseAmt;
                         }
-                     }
+                      }
                 }
 
                 $item->update(['quantity_picked' => $qtyPickedActual]);
@@ -235,6 +246,7 @@ class PickingController extends Controller
             $picking->update(['status' => 'done', 'picked_at' => now()]);
             DeliveryNote::where('picking_slip_id', $id)->update(['status' => 'ready_to_ship']);
 
+            // 3. จัดการ Backorder (สร้างใบใหม่ + จองสต๊อกกลับเข้าไปทันที)
             if (!empty($backorderItems) && $request->create_backorder) {
                 $newPicking = PickingSlip::create([
                     'picking_number' => 'PK-' . time() . '-BO',
@@ -244,14 +256,52 @@ class PickingController extends Controller
                     'note' => 'Backorder from ' . $picking->picking_number
                 ]);
                 $newPicking->items()->createMany($backorderItems);
+
                 DeliveryNote::create([
                     'delivery_number' => 'DO-' . time() . '-BO',
                     'company_id' => $picking->company_id,
                     'order_id' => $picking->order_id,
                     'picking_slip_id' => $newPicking->id,
-                    'shipping_address' => 'Same as original',
+                    'shipping_address' => $picking->order->shipping_address ?? 'Same as original',
                     'status' => 'wait_operation',
                 ]);
+
+                // ✅ [ADDED] Auto-Reserve Stock for Backorder Items
+                // ทำการจองสต๊อก (Soft Reserve) ให้กับใบ Backorder ทันที เพื่อให้ Suggestion Logic มองเห็นยอด
+                foreach ($backorderItems as $boItem) {
+                    $qtyNeeded = $boItem['quantity_requested'];
+                    $inventoryItemDto = $this->itemLookupService->findByPartNumber($boItem['product_id']);
+
+                    if ($inventoryItemDto && $warehouseUuid) {
+                        try {
+                            // คำนวณแผนการหยิบใหม่ (หา Location ที่มีของว่าง หรือจะใช้ Location เดิมก็ได้)
+                            $plan = $this->pickingService->calculatePickingPlan(
+                                $inventoryItemDto->uuid,
+                                $warehouseUuid,
+                                (float) $qtyNeeded
+                            );
+
+                            foreach ($plan as $step) {
+                                if ($step['quantity'] <= 0) continue;
+
+                                $stockLevel = $this->stockRepo->findByLocation(
+                                    $inventoryItemDto->uuid,
+                                    $step['location_uuid'],
+                                    $picking->company_id
+                                );
+
+                                if ($stockLevel) {
+                                    // จองกลับเข้าไปใหม่
+                                    $stockLevel->reserveSoft($step['quantity']);
+                                    $this->stockRepo->save($stockLevel, []);
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // ถ้าจองไม่ได้ (เช่น ของหมดเกลี้ยงจริงๆ) ก็ปล่อยผ่านไป
+                            Log::warning("Backorder Auto-Reserve Failed for {$boItem['product_id']}: " . $e->getMessage());
+                        }
+                    }
+                }
             }
         });
 
@@ -289,23 +339,35 @@ class PickingController extends Controller
             $suggestions = [];
             if ($itemDto && $pickingSlip->status !== 'done' && $warehouseUuid) {
                  $reservedStocks = $this->stockRepo->findWithSoftReserve($itemDto->uuid, $warehouseUuid);
-                 foreach ($reservedStocks as $stock) {
-                    $locationCode = DB::table('warehouse_storage_locations')
-                        ->where('uuid', $stock->getLocationUuid())
-                        ->value('code');
 
-                    if ($stock->getQuantitySoftReserved() > 0) {
+                 // ✅ แก้ไข: เพิ่ม Logic การคำนวณเหมือน method show
+                 $remainingToFind = $pickItem->quantity_requested;
+
+                 foreach ($reservedStocks as $stock) {
+                    if ($remainingToFind <= 0) break;
+
+                    $reservedInLoc = $stock->getQuantitySoftReserved();
+
+                    if ($reservedInLoc > 0) {
+                        $showQty = min($reservedInLoc, $remainingToFind);
+
+                        $locationCode = DB::table('warehouse_storage_locations')
+                            ->where('uuid', $stock->getLocationUuid())
+                            ->value('code');
+
                         $suggestions[] = [
                             'location_uuid' => $stock->getLocationUuid(),
                             'location_code' => $locationCode ?? 'UNKNOWN',
-                            'quantity' => $stock->getQuantitySoftReserved()
+                            'quantity' => $showQty
                         ];
+
+                        $remainingToFind -= $showQty;
                     }
                 }
             }
 
             $locationStr = collect($suggestions)
-                ->map(fn($s) => "{$s['location_code']}")
+                ->map(fn($s) => "{$s['location_code']} ({$s['quantity']})") // เพิ่มการแสดงจำนวนใน String ด้วยเพื่อความชัดเจน
                 ->unique()
                 ->join(', ');
 
