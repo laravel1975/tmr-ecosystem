@@ -16,7 +16,7 @@ class CreateLogisticsDocuments implements ShouldQueue
     public $backoff = 10;
 
     public function __construct(
-        private OrderFulfillmentService $fulfillmentService // ✅ Inject Service ที่สร้างใหม่
+        private OrderFulfillmentService $fulfillmentService
     ) {}
 
     public function handle(OrderConfirmed $event): void
@@ -28,11 +28,8 @@ class CreateLogisticsDocuments implements ShouldQueue
         }
 
         try {
-            // เรียกใช้ Service แทนการเขียน Logic ยาวเหยียดในนี้
             $this->fulfillmentService->fulfillOrder($orderId);
-
         } catch (Exception $e) {
-            // Handle error without crashing the queue permanently (let it retry)
             throw $e;
         }
     }

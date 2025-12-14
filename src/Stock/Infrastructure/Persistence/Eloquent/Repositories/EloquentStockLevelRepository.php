@@ -30,6 +30,14 @@ class EloquentStockLevelRepository implements StockLevelRepositoryInterface
         return (string) Str::uuid();
     }
 
+    public function sumQuantityInLocation(string $locationUuid, string $companyId): float
+    {
+        return (float) $this->model
+            ->where('location_uuid', $locationUuid)
+            ->where('company_id', $companyId)
+            ->sum('quantity_on_hand'); // นับเฉพาะ On Hand
+    }
+
     public function findWithHardReserve(string $itemUuid, string $companyId): array
     {
         $models = $this->model

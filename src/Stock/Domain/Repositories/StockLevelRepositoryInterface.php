@@ -55,4 +55,7 @@ interface StockLevelRepositoryInterface
     // ✅ [เพิ่ม] ค้นหา Stock Level ที่มี Hard Reserve ของสินค้านี้ (เพื่อเตรียมตัดของ)
     /** @return StockLevel[] */
     public function findWithHardReserve(string $itemUuid, string $companyId): array;
+    
+    // ✅ เมธอดหาผลรวมสต๊อกใน Location
+    public function sumQuantityInLocation(string $locationUuid, string $companyId): float;
 }

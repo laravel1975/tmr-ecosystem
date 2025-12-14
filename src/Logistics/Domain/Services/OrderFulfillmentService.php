@@ -29,7 +29,7 @@ class OrderFulfillmentService
     public function fulfillOrder(string $orderId): void
     {
         DB::transaction(function () use ($orderId) {
-            // 1. Lock Order
+            // Lock Order เพื่อป้องกัน Race Condition
             $orderModel = SalesOrderModel::where('id', $orderId)->lockForUpdate()->first();
 
             if (!$orderModel || $orderModel->status === 'cancelled') {
@@ -37,7 +37,7 @@ class OrderFulfillmentService
                 return;
             }
 
-            // ตรวจสอบว่าเคยสร้างเอกสารไปแล้วหรือไม่ (Idempotency)
+            // Check Idempotency (ป้องกันการสร้างซ้ำ)
             if (PickingSlip::where('order_id', $orderId)->where('status', '!=', 'cancelled')->exists()) {
                 Log::info("Fulfillment: Order {$orderId} already has active picking slips. Skipping.");
                 return;
@@ -49,8 +49,8 @@ class OrderFulfillmentService
             $orderFullyFulfilled = true;
 
             foreach ($orderModel->items as $item) {
-                // Logic การคำนวณและจอง (เหมือนเดิม แต่ย้ายมาไว้ที่นี่)
-                $qtyNeeded = $item->quantity; // เริ่มต้นคือต้องการเต็มจำนวนเพราะเช็คแล้วว่ายังไม่มีใบหยิบ
+                // ยอดที่ต้องการจอง
+                $qtyNeeded = $item->quantity;
 
                 $inventoryItem = $this->itemLookupService->findByPartNumber($item->product_id);
                 if (!$inventoryItem) {
@@ -58,6 +58,7 @@ class OrderFulfillmentService
                     continue;
                 }
 
+                // คำนวณแผนการหยิบ (Picking Strategy)
                 $plan = $this->pickingService->calculatePickingPlan(
                     $inventoryItem->uuid,
                     $warehouseId,
@@ -72,12 +73,19 @@ class OrderFulfillmentService
                     if (is_null($locationUuid)) continue;
 
                     try {
-                        $stockLevel = $this->stockRepo->findByLocation($inventoryItem->uuid, $locationUuid, $companyId);
+                        $stockLevel = $this->stockRepo->findByLocation(
+                            $inventoryItem->uuid,
+                            $locationUuid,
+                            $companyId
+                        );
 
-                        // Pre-check
-                        if ($stockLevel && $stockLevel->getAvailableQuantity() >= $qtyToPick) {
+                        if ($stockLevel) {
+                            // ✅ [REFACTORED] ลบ Pre-check (if available > qty) ออก
+                            // ให้ Domain Model (StockLevel) เป็นคนตัดสินใจ
+                            // ถ้าของไม่พอ มันจะ Throw InsufficientStockException เอง
+
                             $stockLevel->reserveSoft($qtyToPick);
-                            $this->stockRepo->save($stockLevel, []);
+                            $this->stockRepo->save($stockLevel, []); // อย่าลืม [] เพื่อแก้ ArgumentCountError
 
                             $qtyAllocatedThisRound += $qtyToPick;
                             $itemsToCreate[] = [
@@ -86,8 +94,14 @@ class OrderFulfillmentService
                                 'quantity' => $qtyToPick,
                             ];
                         }
+                    } catch (InsufficientStockException $e) {
+                        // Handle Business Logic: ของไม่พอใน Location นี้
+                        // เราเลือกที่จะ "ข้าม" ไป Location ถัดไป หรือหยิบเท่าที่มี (ในที่นี้คือข้าม)
+                        Log::warning("Fulfillment: Allocation skipped at {$locationUuid} - " . $e->getMessage());
                     } catch (Exception $e) {
-                        Log::warning("Fulfillment: Error reserving stock at {$locationUuid}: " . $e->getMessage());
+                        // System Error (เช่น DB Connection)
+                        Log::error("Fulfillment: System error reserving stock - " . $e->getMessage());
+                        // กรณีนี้อาจเลือก throw เพื่อให้ Job Retry หรือ catch เพื่อข้ามรายการ
                     }
                 }
 
@@ -96,12 +110,12 @@ class OrderFulfillmentService
                 }
             }
 
-            // สร้างเอกสาร
+            // สร้างเอกสาร Picking Slip / Delivery Note
             if (count($itemsToCreate) > 0) {
                 $this->createDocuments($orderModel, $itemsToCreate);
             }
 
-            // Update Sales Order Status
+            // อัปเดตสถานะ Stock ของ Order
             $orderModel->update([
                 'stock_status' => $orderFullyFulfilled ? 'reserved' : 'backorder'
             ]);

@@ -463,8 +463,10 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                 })}
                                                 <TableRow>
                                                     <TableCell colSpan={isEditMode ? 9 : 8} className="p-2">
-                                                        {!isFullyShipped && !isReadOnly && (
-                                                            <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}><Plus className="h-4 w-4 mr-2" /> Add a product</Button>
+                                                        {!hasShippedItems && !isFullyShipped && !isReadOnly && (
+                                                            <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}>
+                                                                <Plus className="h-4 w-4 mr-2" /> Add a product
+                                                            </Button>
                                                         )}
                                                     </TableCell>
                                                 </TableRow>
@@ -484,7 +486,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             {/* --- TAB 2: TRACKING & HISTORY --- */}
                             {isEditMode && (
                                 <TabsContent value="tracking">
-                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
                                         {/* Timeline Component */}
                                         <div className="lg:col-span-1">
                                             <OrderTimeline events={order.timeline || []} />
@@ -493,9 +495,9 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                         {/* Summary Stats */}
                                         <div className="lg:col-span-2 space-y-6">
                                             <Card>
-                                                <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="w-5 h-5 text-indigo-600"/> Fulfillment Status</CardTitle></CardHeader>
+                                                <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="w-5 h-5 text-indigo-600" /> Fulfillment Status</CardTitle></CardHeader>
                                                 <CardContent>
-                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                                                         <div className="p-4 bg-gray-50 rounded-lg border">
                                                             <div className="text-xs text-gray-500 uppercase font-bold mb-1">Total Ordered</div>
                                                             <div className="text-3xl font-bold text-gray-800">{getTotalOrdered()}</div>
@@ -518,13 +520,13 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                                 {order.shipping_progress}%
                                                             </div>
                                                         </div>
-                                                     </div>
+                                                    </div>
                                                 </CardContent>
                                             </Card>
 
                                             {/* Related Documents */}
                                             <Card>
-                                                <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5 text-gray-500"/> Related Documents</CardTitle></CardHeader>
+                                                <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5 text-gray-500" /> Related Documents</CardTitle></CardHeader>
                                                 <CardContent>
                                                     <div className="space-y-4">
                                                         {order.picking_count ? (
@@ -547,7 +549,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                 </CardContent>
                                             </Card>
                                         </div>
-                                     </div>
+                                    </div>
                                 </TabsContent>
                             )}
                         </Tabs>

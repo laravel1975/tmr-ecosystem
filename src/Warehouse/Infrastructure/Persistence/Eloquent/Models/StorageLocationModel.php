@@ -23,6 +23,14 @@ class StorageLocationModel extends Model
         'type',
         'description',
         'is_active',
+        'max_capacity',
+        'is_full',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'is_full' => 'boolean',     
+        'max_capacity' => 'float',  
     ];
 
     public function uniqueIds(): array
