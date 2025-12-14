@@ -57,16 +57,16 @@ class EventServiceProvider extends ServiceProvider
         // ✅ [Sales -> Logistics -> Manufacturing Flow]
         // -------------------------------------------------------
         OrderConfirmed::class => [
-            CreateLogisticsDocuments::class,
+            // CreateLogisticsDocuments::class,
             CreateProductionOrderFromSales::class,
         ],
 
         OrderUpdated::class => [
-            SyncLogisticsDocuments::class,
+            // SyncLogisticsDocuments::class,
         ],
 
         StockReceived::class => [
-            AllocateBackorders::class,
+            // AllocateBackorders::class,
         ],
 
         DeliveryNoteUpdated::class => [

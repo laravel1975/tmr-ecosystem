@@ -9,17 +9,19 @@ use Inertia\Response;
 use Illuminate\Support\Facades\DB;
 use Exception;
 use Illuminate\Support\Facades\Log;
+
 // Domain & Application
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Stock\Application\UseCases\ReceiveStockUseCase;
 use TmrEcosystem\Stock\Application\DTOs\ReceiveStockData;
+use TmrEcosystem\Stock\Application\UseCases\AdjustStockUseCase;
+use TmrEcosystem\Stock\Application\DTOs\AdjustStockData;
+use TmrEcosystem\Stock\Application\UseCases\TransferStockUseCase;
+use TmrEcosystem\Stock\Application\DTOs\TransferStockData;
 
 // Shared Services
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
-use TmrEcosystem\Stock\Application\DTOs\AdjustStockData;
-use TmrEcosystem\Stock\Application\DTOs\TransferStockData;
-use TmrEcosystem\Stock\Application\UseCases\AdjustStockUseCase;
-use TmrEcosystem\Stock\Application\UseCases\TransferStockUseCase;
+
 // Infrastructure Models (Cross-Boundary Query)
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel;
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\StorageLocationModel;
@@ -33,9 +35,9 @@ class StockController extends Controller
 
     public function index(Request $request): Response
     {
-        // ... (โค้ด index เดิมของคุณ คงไว้เหมือนเดิม) ...
         $companyId = $request->user()->company_id;
         $filters = $request->only(['search', 'warehouse_uuid']);
+
         $stockLevels = $this->stockRepository->getPaginatedList($companyId, $filters);
         $warehouses = WarehouseModel::where('company_id', $companyId)->where('is_active', true)->get(['uuid', 'name', 'code']);
 
@@ -47,7 +49,7 @@ class StockController extends Controller
     }
 
     /**
-     * ✅ [เพิ่มใหม่] แสดงหน้าฟอร์มรับสินค้า
+     * ✅ แสดงหน้าฟอร์มรับสินค้า (Inbound)
      */
     public function receive(Request $request): Response
     {
@@ -68,15 +70,14 @@ class StockController extends Controller
                 ->get(['uuid', 'code', 'type', 'description']);
         }
 
-        // ✅ FIX: Map ข้อมูลสินค้าให้ตรงกับ Format ที่ Frontend (Combobox) ต้องการ
-        // เราจะใช้ PartNumber เป็น 'id' เพื่อให้ตอน Submit กลับมา ได้ค่า PartNumber เลย
-        // ✅ FIX: Map ข้อมูลสินค้าให้มี field 'stock' ตามที่ ProductCombobox ต้องการ
+        // ✅ Map ข้อมูลสินค้าให้ตรงกับ Format ที่ ProductCombobox ต้องการ
+        // ใส่ 'stock' => 0 เพื่อป้องกัน Frontend Error (หน้า Receive ไม่จำเป็นต้องรู้ยอดคงเหลือปัจจุบันเป๊ะๆ)
         $rawProducts = $this->itemLookupService->searchItems('');
         $products = collect($rawProducts)->map(fn($item) => [
-            'id' => $item->partNumber,
+            'id' => $item->partNumber, // ใช้ PartNumber เป็น ID ในการส่ง Form
             'name' => "{$item->name} ({$item->partNumber})",
             'price' => $item->price,
-            'stock' => 0, // 👈 เพิ่มบรรทัดนี้ (ใส่ 0 ไปก่อนเพราะหน้า Receive ไม่ได้ซีเรียสเรื่องยอดคงเหลือเท่าหน้า Sales)
+            'stock' => 0,
             'image_url' => $item->imageUrl
         ])->values();
 
@@ -88,15 +89,15 @@ class StockController extends Controller
         ]);
     }
 
+    /**
+     * ✅ ประมวลผลการรับสินค้า (Trigger UseCase -> Event -> Listener -> Backorder Allocation)
+     */
     public function processReceive(Request $request, ReceiveStockUseCase $receiveUseCase)
     {
-        // Debug: ดูค่าที่ส่งมา
-        // Log::info('Receive Payload:', $request->all());
-
         $request->validate([
             'warehouse_uuid' => 'required|exists:warehouses,uuid',
             'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required', // ตอนนี้ Frontend จะส่ง PartNumber มาที่นี่
+            'items.*.product_id' => 'required', // PartNumber
             'items.*.location_uuid' => 'required|exists:warehouse_storage_locations,uuid',
             'items.*.quantity' => 'required|numeric|min:0.01',
             'reference' => 'nullable|string'
@@ -110,7 +111,7 @@ class StockController extends Controller
             DB::transaction(function () use ($request, $receiveUseCase, $companyId, $warehouseUuid, $reference) {
 
                 foreach ($request->items as $item) {
-                    // 1. ค้นหาด้วย Part Number (ซึ่งตอนนี้ค่า product_id คือ PartNumber แล้ว)
+                    // ค้นหาสินค้าเพื่อเอา UUID
                     $productDto = $this->itemLookupService->findByPartNumber($item['product_id']);
 
                     if (!$productDto) {
@@ -127,11 +128,13 @@ class StockController extends Controller
                         reference: $reference
                     );
 
+                    // เรียก UseCase: ในนี้จะทำการ Save และ Fire Event 'StockReceived' ให้เอง
                     $receiveUseCase($data);
                 }
             });
 
-            return to_route('stock.index')->with('success', 'Received stock successfully.');
+            return to_route('stock.index')->with('success', 'Received stock successfully. Backorders (if any) will be allocated shortly.');
+
         } catch (Exception $e) {
             Log::error('Receive Stock Failed: ' . $e->getMessage());
             return back()->with('error', 'Failed to receive stock: ' . $e->getMessage());
@@ -139,13 +142,13 @@ class StockController extends Controller
     }
 
     /**
-     * ✅ [เพิ่มใหม่] ดำเนินการย้ายสต็อก
+     * ✅ ดำเนินการย้ายสต็อก (Transfer)
      */
     public function transfer(Request $request, TransferStockUseCase $transferUseCase)
     {
         $request->validate([
             'item_uuid' => 'required',
-            'warehouse_uuid' => 'required', // เพื่อความชัวร์
+            'warehouse_uuid' => 'required',
             'from_location_uuid' => 'required',
             'to_location_uuid' => 'required|different:from_location_uuid',
             'quantity' => 'required|numeric|min:0.01',
@@ -157,7 +160,7 @@ class StockController extends Controller
                 $data = new TransferStockData(
                     companyId: auth()->user()->company_id,
                     itemUuid: $request->item_uuid,
-                    warehouseUuid: $request->warehouse_uuid, // อ้างอิงคลังเดียวกัน
+                    warehouseUuid: $request->warehouse_uuid,
                     fromLocationUuid: $request->from_location_uuid,
                     toLocationUuid: $request->to_location_uuid,
                     quantity: (float)$request->quantity,
@@ -175,7 +178,7 @@ class StockController extends Controller
     }
 
     /**
-     * ✅ [เพิ่มใหม่] ปรับยอดสต็อก (Cycle Count / Adjustment)
+     * ✅ ปรับยอดสต็อก (Adjust / Cycle Count)
      */
     public function adjust(Request $request, AdjustStockUseCase $adjustUseCase)
     {
@@ -183,8 +186,8 @@ class StockController extends Controller
             'item_uuid' => 'required',
             'warehouse_uuid' => 'required',
             'location_uuid' => 'required',
-            'new_quantity' => 'required|numeric|min:0', // ยอดใหม่ห้ามติดลบ (แต่เป็น 0 ได้)
-            'reason' => 'required|string|max:255' // บังคับใส่เหตุผล
+            'new_quantity' => 'required|numeric|min:0',
+            'reason' => 'required|string|max:255'
         ]);
 
         try {
@@ -204,7 +207,6 @@ class StockController extends Controller
 
             return back()->with('success', 'Stock adjusted successfully.');
         } catch (Exception $e) {
-            // ถ้าเป็นการแจ้งเตือนว่ายอดเท่าเดิม (ไม่ใช่ Error ร้ายแรง)
             if ($e->getMessage() === "No adjustment needed.") {
                 return back()->with('warning', 'No changes made (Quantity is same as current).');
             }
@@ -213,7 +215,7 @@ class StockController extends Controller
     }
 
     /**
-     * ✅ [เพิ่มใหม่] API ดึง Location สำหรับ Dropdown ใน Modal
+     * API ดึง Location สำหรับ Dropdown ใน Modal
      */
     public function getWarehouseLocations(string $uuid)
     {

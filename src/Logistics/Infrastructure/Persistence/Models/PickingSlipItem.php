@@ -10,6 +10,12 @@ class PickingSlipItem extends Model
     protected $table = 'logistics_picking_slip_items';
     protected $guarded = [];
 
+    // ✅ [FIX] เพิ่มความสัมพันธ์นี้ครับ
+    public function pickingSlip()
+    {
+        return $this->belongsTo(PickingSlip::class, 'picking_slip_id');
+    }
+
     public function salesOrderItem()
     {
         return $this->belongsTo(SalesOrderItemModel::class, 'sales_order_item_id');

@@ -5,12 +5,14 @@ namespace TmrEcosystem\Logistics\Infrastructure\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use TmrEcosystem\Logistics\Application\Listeners\AllocateBackorders;
 use TmrEcosystem\Logistics\Application\Listeners\CancelLogisticsDocuments;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated; // ✅ Import Event
 use TmrEcosystem\Logistics\Application\Listeners\CreateLogisticsDocuments;
 use TmrEcosystem\Logistics\Application\Listeners\SyncLogisticsDocuments; // ✅ Import Listener
 use TmrEcosystem\Sales\Domain\Events\OrderCancelled;
+use TmrEcosystem\Stock\Domain\Events\StockReceived;
 
 class LogisticsServiceProvider extends ServiceProvider
 {
@@ -32,10 +34,16 @@ class LogisticsServiceProvider extends ServiceProvider
             SyncLogisticsDocuments::class
         );
 
-        // 3. ✅ Cancel (เพิ่มส่วนนี้)
+        // 3. ✅ Cancel
         Event::listen(
             OrderCancelled::class,
             CancelLogisticsDocuments::class
+        );
+
+        // 4. ✅ Stock Received -> Allocate Backorders
+        Event::listen(
+            StockReceived::class,
+            AllocateBackorders::class
         );
 
         // โหลด Migrations (ถ้ามีเฉพาะของ module นี้)
