@@ -12,6 +12,7 @@ use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvi
 
 // Domain Events
 use TmrEcosystem\HRM\Domain\Events\EmployeeRateUpdated;
+use TmrEcosystem\Logistics\Application\Listeners\AllocateBackorders;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Stock\Domain\Events\StockLevelUpdated;
 
@@ -24,6 +25,7 @@ use TmrEcosystem\Maintenance\Application\Listeners\UpdateMaintenanceTechnicianDa
 use TmrEcosystem\Manufacturing\Application\Listeners\CreateProductionOrderFromSales;
 use TmrEcosystem\Sales\Application\Listeners\UpdateSalesOrderStatusOnDelivery;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
+use TmrEcosystem\Stock\Domain\Events\StockReceived;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -61,6 +63,10 @@ class EventServiceProvider extends ServiceProvider
 
         OrderUpdated::class => [
             SyncLogisticsDocuments::class,
+        ],
+
+        StockReceived::class => [
+            AllocateBackorders::class,
         ],
 
         DeliveryNoteUpdated::class => [

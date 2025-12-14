@@ -11,6 +11,8 @@ interface ItemLookupServiceInterface
      */
     public function findByPartNumber(string $partNumber): ?PublicItemDto;
 
+    public function findByUuid(string $uuid): ?PublicItemDto;
+
     /**
      * ค้นหาสินค้าหลายชิ้นพร้อมกัน (Batch Query เพื่อ Performance)
      * @param array $partNumbers รายการ Part Number ที่ต้องการหา
@@ -23,6 +25,6 @@ interface ItemLookupServiceInterface
      * @param array $includeIds ID ที่ต้องรวมมาด้วยเสมอ (เช่น สินค้าที่เลือกไว้แล้ว)
      * @return PublicItemDto[]
      */
-    
+
     public function searchItems(string $search = '', array $includeIds = []): array;
 }

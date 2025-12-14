@@ -14,6 +14,17 @@ class ItemLookupService implements ItemLookupServiceInterface
         return $items[0] ?? null;
     }
 
+    /**
+     * ✅ [FIXED] เพิ่มเมธอดนี้โดยใช้ Logic เดียวกับ findByPartNumber
+     * (ใช้ fetchItems ดึงข้อมูลจาก DB โดยตรง ไม่ต้องพึ่ง Repository)
+     */
+    public function findByUuid(string $uuid): ?PublicItemDto
+    {
+        // ใช้ helper function ที่มีอยู่แล้ว โดยระบุ keyField เป็น 'uuid'
+        $items = $this->fetchItems([$uuid], 'uuid');
+        return $items[0] ?? null;
+    }
+
     public function getByPartNumbers(array $partNumbers): array
     {
         if (empty($partNumbers)) return [];
@@ -34,15 +45,15 @@ class ItemLookupService implements ItemLookupServiceInterface
             ->where('can_sell', true);
 
         if (!empty($search)) {
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('part_number', 'like', "%{$search}%")
-                  ->orWhere('name', 'like', "%{$search}%");
+                    ->orWhere('name', 'like', "%{$search}%");
             });
         }
 
         if (!empty($includeIds)) {
             $query->orWhereIn('part_number', $includeIds)
-                  ->orWhereIn('uuid', $includeIds);
+                ->orWhereIn('uuid', $includeIds);
         }
 
         // ดึงเฉพาะ ID ก่อนเพื่อประสิทธิภาพ
