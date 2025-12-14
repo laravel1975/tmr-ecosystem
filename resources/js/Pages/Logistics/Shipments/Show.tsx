@@ -11,15 +11,14 @@ import { Label } from "@/Components/ui/label";
 import {
     ArrowLeft, Truck, User, Calendar, MapPin,
     Play, CheckCircle2, Printer, Package, XCircle, Phone,
-    AlertTriangle, Loader2, Map as MapIcon
+    AlertTriangle, Loader2, Map as MapIcon, ExternalLink
 } from "lucide-react";
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/Components/ui/tooltip';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/Components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/Components/ui/radio-group";
 import axios from 'axios';
 import LogisticsNavigationMenu from '../Partials/LogisticsNavigationMenu';
-// ✅ Import Timeline Component
 import ShipmentTimeline from '@/Components/Logistics/ShipmentTimeline';
 
 // --- Types ---
@@ -64,8 +63,6 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
 
     const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
     const [unloadType, setUnloadType] = useState<'whole' | 'partial'>('whole');
-
-    // ✅ [เพิ่ม] State สำหรับเลือก Action ปลายทาง (Stock หรือ Return)
     const [unloadAction, setUnloadAction] = useState<'stock' | 'return'>('stock');
 
     const [deliveryItems, setDeliveryItems] = useState<any[]>([]);
@@ -115,7 +112,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
     const handleUnloadClick = (delivery: Delivery) => {
         setSelectedDelivery(delivery);
         setUnloadType('whole');
-        setUnloadAction('stock'); // Default Action
+        setUnloadAction('stock');
         setDeliveryItems([]);
         setUnloadModalOpen(true);
     };
@@ -154,7 +151,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
         router.post(route('logistics.shipments.unload', shipment.id), {
             delivery_note_id: selectedDelivery.id,
             type: unloadType,
-            target_action: unloadAction, // ✅ ส่ง target_action ไปด้วย
+            target_action: unloadAction,
             items: deliveryItems
         }, {
             onSuccess: () => { setUnloadModalOpen(false); setIsSubmitting(false); },
@@ -295,8 +292,17 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                                         deliveries.map((dn) => (
                                             <TableRow key={dn.id} className="hover:bg-slate-50">
                                                 <TableCell className="font-medium">
-                                                    <span className="text-indigo-600">{dn.delivery_number}</span>
-                                                    <div className="text-xs text-gray-500">{dn.order_number}</div>
+                                                    {/* ✅ [FIXED] ใช้ <a> แทน <Link> เพื่อบังคับเปิดแท็บใหม่ */}
+                                                    <a
+                                                        href={route('logistics.delivery.process', dn.id)}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1 w-fit group"
+                                                    >
+                                                        {dn.delivery_number}
+                                                        <ExternalLink className="w-3 h-3 opacity-0 -ml-1 group-hover:opacity-50 group-hover:ml-0 transition-all" />
+                                                    </a>
+                                                    <div className="text-xs text-gray-500 mt-0.5">{dn.order_number}</div>
                                                 </TableCell>
                                                 <TableCell>{dn.customer_name}</TableCell>
                                                 <TableCell>
@@ -331,7 +337,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                     </Card>
                 </div>
 
-                {/* Status Confirm Modal (คงเดิม) */}
+                {/* Status Confirm Modal */}
                 <Dialog open={statusModalOpen} onOpenChange={setStatusModalOpen}>
                     <DialogContent>
                         <DialogHeader>
@@ -358,7 +364,7 @@ export default function ShipmentShow({ auth, shipment, deliveries }: Props) {
                     </DialogContent>
                 </Dialog>
 
-                {/* Unload Modal (Updated with Action Selection) */}
+                {/* Unload Modal */}
                 <Dialog open={unloadModalOpen} onOpenChange={setUnloadModalOpen}>
                     <DialogContent className="sm:max-w-[600px]">
                         <DialogHeader>

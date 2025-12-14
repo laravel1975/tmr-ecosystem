@@ -222,7 +222,6 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                                                 <TableHead className="pl-6">Reference</TableHead>
                                                 <TableHead>Source Doc</TableHead>
                                                 <TableHead>Customer</TableHead>
-                                                <TableHead className="text-center">Items</TableHead>
                                                 <TableHead>Assigned To</TableHead>
                                                 <TableHead>Date</TableHead>
                                                 <TableHead>Status</TableHead>
@@ -261,9 +260,7 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                                                                 </span>
                                                             </div>
                                                         </TableCell>
-                                                        <TableCell className="text-center">
-                                                            <Badge variant="secondary" className="font-mono">{slip.items_count}</Badge>
-                                                        </TableCell>
+
                                                         <TableCell>
                                                             {slip.picker_name ? (
                                                                 <div className="flex items-center gap-2">
