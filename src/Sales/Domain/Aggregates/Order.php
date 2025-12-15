@@ -15,6 +15,9 @@ class Order
     private string $orderNumber;
     private string $customerId;
 
+    // ✅ [เพิ่ม] Salesperson Property
+    private ?string $salespersonId;
+
     // ✅ [เพิ่ม] Context Properties
     private string $companyId;
     private string $warehouseId;
@@ -29,12 +32,15 @@ class Order
     public function __construct(
         string $customerId,
         string $companyId = 'DEFAULT_COMPANY',  // Default ไว้กัน Error (แต่ควรส่งค่าจริง)
-        string $warehouseId = 'DEFAULT_WAREHOUSE'
+        string $warehouseId = 'DEFAULT_WAREHOUSE',
+        // ✅ [เพิ่ม] รับ Salesperson ID ใน Constructor
+        ?string $salespersonId = null
     ) {
         $this->id = (string) Str::uuid();
         $this->customerId = $customerId;
         $this->companyId = $companyId;
         $this->warehouseId = $warehouseId;
+        $this->salespersonId = $salespersonId; // ✅ Set Property
 
         $this->status = OrderStatus::Draft;
         $this->items = collect([]);
@@ -60,6 +66,12 @@ class Order
     public function getWarehouseId(): string
     {
         return $this->warehouseId;
+    }
+
+    // ✅ [เพิ่ม] Getter
+    public function getSalespersonId(): ?string
+    {
+        return $this->salespersonId;
     }
 
     public function getStatus(): OrderStatus
@@ -129,6 +141,15 @@ class Order
         $this->paymentTerms = $paymentTerms ?? 'immediate';
     }
 
+    // ✅ [เพิ่ม] Method สำหรับเปลี่ยน Salesperson (เผื่อโอนเคส)
+    public function assignSalesperson(string $salespersonId): void
+    {
+        if ($this->status === OrderStatus::Completed) {
+            throw new Exception("Cannot change salesperson of a completed order.");
+        }
+        $this->salespersonId = $salespersonId;
+    }
+
     public function confirm(): void
     {
         if ($this->status !== OrderStatus::Draft) {
@@ -164,13 +185,15 @@ class Order
         // เพิ่มพารามิเตอร์รับค่ากลับ
         string $companyId,
         string $warehouseId,
+        // ✅ [เพิ่ม] รับ parameter
+        ?string $salespersonId,
         string $statusString,
         float $totalAmount,
         iterable $itemsData,
         string $note = '',
         string $paymentTerms = 'immediate'
     ): self {
-        $instance = new self($customerId, $companyId, $warehouseId);
+        $instance = new self($customerId, $companyId, $warehouseId, $salespersonId);
 
         $instance->id = $id;
         $instance->orderNumber = $orderNumber;

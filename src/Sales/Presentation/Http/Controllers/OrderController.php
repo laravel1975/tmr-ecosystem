@@ -8,7 +8,7 @@ use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Exception;
-
+use Inertia\Response;
 // DTOs & UseCases
 use TmrEcosystem\Sales\Application\DTOs\CreateOrderDto;
 use TmrEcosystem\Sales\Application\DTOs\UpdateOrderDto;
@@ -23,6 +23,7 @@ use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 // Persistence Models
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 use TmrEcosystem\Customers\Infrastructure\Persistence\Models\Customer;
+use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel;
 
 // ✅ Import Service Interface
@@ -48,35 +49,76 @@ class OrderController extends Controller
         return Inertia::render('Sales/Dashboard');
     }
 
-    public function index(Request $request)
+    public function index(Request $request): Response
     {
+        // เริ่มต้น Query โดยใช้ Eloquent Relationships
+        // ใช้ withSum เพื่อคำนวณยอดที่ส่งแล้ว (Shipped Amount) ตาม Logic เดิม
         $query = SalesOrderModel::query()
-            ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
+            ->with(['customer', 'salesperson']) // ✅ Eager load salesperson
             ->withSum([
                 'items as shipped_total_amount' => function ($q) {
                     $q->select(DB::raw('SUM(qty_shipped * unit_price)'));
                 }
-            ], 'subtotal')
-            ->select('sales_orders.*', 'customers.name as customer_name', 'customers.code as customer_code');
+            ], 'subtotal');
 
+        // 1. Search Filter (คงเดิม)
         if ($request->search) {
-            $query->where('sales_orders.order_number', 'like', "%{$request->search}%")
-                ->orWhere('customers.name', 'like', "%{$request->search}%");
+            $query->where(function ($q) use ($request) {
+                $q->where('order_number', 'like', "%{$request->search}%")
+                    ->orWhereHas('customer', function ($q) use ($request) {
+                        $q->where('name', 'like', "%{$request->search}%")
+                            ->orWhere('code', 'like', "%{$request->search}%");
+                    });
+            });
+        }
+
+        // 2. ✅ Filter: My Orders (เฉพาะของตัวเอง)
+        if ($request->boolean('my_orders')) {
+            $query->where('salesperson_id', $request->user()->id);
+        }
+
+        // 3. ✅ Filter: Salesperson (สำหรับ Manager เลือกดูของคนอื่น)
+        if ($request->salesperson_id) {
+            $query->where('salesperson_id', $request->salesperson_id);
+        }
+
+        // 4. ✅ Permission Check & Prepare Salespersons List (Manager Only)
+        // ตรวจสอบว่า user มีสิทธิ์ดูทั้งหมดหรือไม่ (เช่น Super Admin หรือ Sales Manager)
+        // หมายเหตุ: ปรับ Role Name ตามที่ใช้จริงในระบบของคุณ
+        $canViewAll = $request->user()->hasRole(['Super Admin', 'Sales Manager']);
+
+        $salespersons = [];
+        if ($canViewAll) {
+            $salespersons = User::role(['Sales Executive', 'Sales Manager'])
+                ->orderBy('name')
+                ->get(['id', 'name']);
+        } else {
+            // ถ้าไม่ใช่ Manager ให้บังคับดูแค่ของตัวเอง (Optional Security)
+            // $query->where('salesperson_id', $request->user()->id);
         }
 
         return Inertia::render('Sales/Index', [
-            'orders' => $query->latest('sales_orders.created_at')->paginate(10)->withQueryString()->through(fn($order) => [
-                'id' => $order->id,
-                'order_number' => $order->order_number,
-                'customer_name' => $order->customer_name,
-                'customer_code' => $order->customer_code,
-                'status' => $order->status,
-                'created_at' => $order->created_at->format('d/m/Y'),
-                'total_amount' => $order->total_amount,
-                'shipped_amount' => $order->shipped_total_amount ?? 0,
-                'display_amount' => $order->status === 'cancelled' ? 0 : $order->total_amount,
-            ]),
-            'filters' => $request->only(['search']),
+            'orders' => $query->latest('created_at')
+                ->paginate(10)
+                ->withQueryString()
+                ->through(fn($order) => [
+                    'id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'customer_name' => $order->customer ? $order->customer->name : 'N/A',
+                    'customer_code' => $order->customer ? $order->customer->code : 'N/A',
+                    'salesperson' => $order->salesperson ? [ // ✅ ส่งข้อมูล Salesperson กลับไป
+                        'id' => $order->salesperson->id,
+                        'name' => $order->salesperson->name,
+                    ] : null,
+                    'status' => $order->status,
+                    'created_at' => $order->created_at->format('d/m/Y'),
+                    'total_amount' => $order->total_amount,
+                    'shipped_amount' => $order->shipped_total_amount ?? 0,
+                    'display_amount' => $order->status === 'cancelled' ? 0 : $order->total_amount,
+                ]),
+            'filters' => $request->only(['search', 'my_orders', 'salesperson_id']),
+            'salespersons' => $salespersons, // ✅ ส่ง List ให้ Dropdown Filter
+            'canViewAll' => $canViewAll,     // ✅ ส่ง Flag บอกหน้าบ้านว่ามีสิทธิ์เลือกดูไหม
         ]);
     }
 
@@ -127,11 +169,32 @@ class OrderController extends Controller
             ->toArray();
     }
 
-    public function create()
+    public function create(Request $request): Response
     {
+        // 1. ✅ Check Permissions
+        // คนที่มีสิทธิ์เลือก Salesperson ให้คนอื่นได้ (Manager/Admin)
+        $canAssignSalesperson = $request->user()->hasRole(['Super Admin', 'Sales Manager']);
+
+        // 2. ✅ Load Salespersons List
+        // ถ้ามีสิทธิ์ ให้ดึงรายชื่อเซลล์ไปแสดงใน Dropdown
+        $salespersons = $canAssignSalesperson
+            ? User::role(['Sales Executive', 'Sales Manager'])->orderBy('name')->get(['id', 'name'])
+            : [];
+
+        // 3. ✅ Load Customers with Default Salesperson
+        // ดึงข้อมูลลูกค้าพร้อม default_salesperson_id เพื่อทำ Auto-select
+        $customers = Customer::query()
+            ->where('company_id', $request->user()->company_id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'default_salesperson_id']);
+
         return Inertia::render('Sales/CreateOrder', [
-            'customers' => $this->getCustomerOptions(),
-            // ✅ เรียกฟังก์ชันใหม่ที่ผ่าน Service
+            'customers' => $customers, // ส่ง Object ลูกค้าที่ครบถ้วนกว่าเดิม
+            'salespersons' => $salespersons,
+            'canAssignSalesperson' => $canAssignSalesperson,
+            'currentUser' => $request->user(), // ส่ง user ปัจจุบันไปเพื่อ set default
+
+            // ข้อมูลเดิม
             'availableProducts' => $this->getProductOptions(),
             'newOrderNumber' => 'New',
             'order' => null,
@@ -148,11 +211,14 @@ class OrderController extends Controller
             'items.*.quantity' => 'required|integer|min:1',
             'note' => 'nullable|string',
             'payment_terms' => 'nullable|string',
+            // อนุญาตให้รับ salesperson_id กรณี Manager สั่งมา
+            'salesperson_id' => 'nullable|exists:users,id',
         ]);
 
         $user = $request->user();
         $companyId = $user->company_id ?? 'DEFAULT_COMPANY';
 
+        // 1. หา Warehouse
         $warehouse = WarehouseModel::where('company_id', $companyId)
             ->where('is_active', true)
             ->first();
@@ -163,38 +229,74 @@ class OrderController extends Controller
 
         $warehouseId = $warehouse->uuid;
 
+        // 2. ระบุ Salesperson
+        $salespersonId = $request->filled('salesperson_id')
+            ? $request->salesperson_id
+            : $user->id;
+
+        // เตรียมข้อมูลสำหรับ DTO
+        $inputData = $validated;
+
+        // ⚠️ หมายเหตุ: เราจะไม่ส่ง confirm_order = true ไปให้ UseCase แล้ว
+        // เพราะเราจะมาจัดการ Manual Confirm เองข้างล่างตามที่คุณต้องการ
+        // if ($request->input('action') === 'confirm') {
+        //    $inputData['confirm_order'] = true;
+        // }
+
         try {
-            $dto = CreateOrderDto::fromRequest($validated, $companyId, $warehouseId);
+            // 3. สร้าง DTO
+            $dto = CreateOrderDto::fromRequest(
+                data: $inputData,
+                companyId: $companyId,
+                warehouseId: $warehouseId,
+                salespersonId: $salespersonId
+            );
+
+            // 4. เรียก UseCase สร้าง Order (จะได้สถานะ Draft กลับมา)
             $order = $useCase->handle($dto);
 
+            // ✅ 5. ประยุกต์ใช้ Logic Manual Confirm ที่คุณต้องการ
             if ($request->input('action') === 'confirm') {
+                // อัปเดตสถานะใน Database โดยตรง
                 SalesOrderModel::where('id', $order->getId())->update(['status' => 'confirmed']);
+
+                // Dispatch Event
+                // หมายเหตุ: ตรวจสอบ Event OrderConfirmed ว่ารับค่าเป็น ID (string) หรือ Object
+                // ถ้าใน Event __construct รับ string $orderId ให้ใช้ $order->getId()
+                // ถ้าใน Event __construct รับ Order $order ให้ใช้ $order
                 OrderConfirmed::dispatch($order);
             }
 
             return to_route('sales.orders.show', $order->getId())
                 ->with('success', 'Order created successfully!');
+
         } catch (Exception $e) {
             Log::error("Create Order Failed: " . $e->getMessage());
 
-            if (isset($order)) {
-                SalesOrderModel::where('id', $order->getId())->update(['status' => 'draft']);
+            // กรณี Error แต่ Order ถูกสร้างไปแล้ว (เช่น Confirm ไม่ผ่าน)
+            if (isset($order) && $order->getId()) {
                 return to_route('sales.orders.show', $order->getId())
-                    ->with('error', 'บันทึกออเดอร์แล้ว แต่ยืนยันไม่ได้: ' . $e->getMessage());
+                    ->with('error', 'บันทึกออเดอร์แล้ว แต่มีข้อผิดพลาด: ' . $e->getMessage());
             }
 
             return back()->with('error', 'Failed to create order: ' . $e->getMessage());
         }
     }
 
-    // ✅ [Update] ปรับปรุงเมธอด show เพื่อคำนวณสถานะการจัดส่ง + Timeline
+    // ✅ [Update] ปรับปรุงเมธอด show เพื่อคำนวณสถานะการจัดส่ง + Timeline + Salesperson
     public function show(string $id, OrderRepositoryInterface $repo)
     {
+        // 1. Fetch Order via Repository (Domain Aggregate)
         $order = $repo->findById($id);
-        $orderModel = SalesOrderModel::withCount('pickingSlips')->find($id);
+
+        // 2. Fetch Order Model via Eloquent (for relationships & quick reads)
+        $orderModel = SalesOrderModel::withCount('pickingSlips')
+            ->with(['salesperson', 'customer']) // ✅ Eager load salesperson
+            ->find($id);
 
         if (!$order) abort(404);
 
+        // 3. Pagination Logic (Previous/Next Order)
         $allIds = SalesOrderModel::orderBy('created_at', 'desc')->pluck('id')->toArray();
         $currentIndex = array_search($id, $allIds);
 
@@ -205,10 +307,11 @@ class OrderController extends Controller
             'next_id' => $allIds[$currentIndex + 1] ?? null,
         ];
 
+        // 4. Product Details Lookup
         $orderProductIds = $order->getItems()->map(fn($item) => $item->productId)->toArray();
         $productDetails = $this->itemLookupService->getByPartNumbers($orderProductIds);
 
-        // ✅ คำนวณสถานะการจัดส่ง (Shipping Status Logic)
+        // 5. ✅ Calculate Shipping Status
         $totalQty = 0;
         $totalShipped = 0;
         $isFullyShipped = true;
@@ -216,7 +319,7 @@ class OrderController extends Controller
 
         $itemsData = $order->getItems()->map(function ($item) use ($productDetails, &$totalQty, &$totalShipped, &$isFullyShipped, &$hasShippedItems) {
             $qty = $item->quantity;
-            $shipped = $item->qtyShipped;
+            $shipped = $item->qtyShipped ?? 0; // Ensure property exists
 
             $totalQty += $qty;
             $totalShipped += $shipped;
@@ -225,7 +328,7 @@ class OrderController extends Controller
                 $hasShippedItems = true;
             }
             if ($shipped < $qty) {
-                $isFullyShipped = false; // ถ้ามีรายการไหนยังส่งไม่ครบ ก็ถือว่ายังไม่ Fully Shipped
+                $isFullyShipped = false;
             }
 
             return [
@@ -240,22 +343,41 @@ class OrderController extends Controller
             ];
         });
 
-        // Handle edge case: empty order is not fully shipped in business sense (or handled by validation)
+        // Edge case: Empty order
         if ($order->getItems()->isEmpty()) {
             $isFullyShipped = false;
         }
 
-        // ✅ [เพิ่ม] เรียกข้อมูล Timeline จาก Service
+        // 6. ✅ Fetch Timeline
         $timelineData = $this->traceabilityService->getOrderTimeline($id);
 
-        return Inertia::render('Sales/CreateOrder', [
+        // 7. ✅ Prepare Salesperson Data for Dropdown (if editable)
+        // Similar logic to create method, needed if we allow changing salesperson in edit mode
+        $user = request()->user();
+        $canAssignSalesperson = $user->hasRole(['Super Admin', 'Sales Manager']);
+        $salespersons = $canAssignSalesperson
+            ? User::role(['Sales Executive', 'Sales Manager'])->orderBy('name')->get(['id', 'name'])
+            : [];
+
+        // 8. Return Response
+        return Inertia::render('Sales/Show', [
             'customers' => $this->getCustomerOptions(),
+            'salespersons' => $salespersons, // ✅ Send list for editing
+            'canAssignSalesperson' => $canAssignSalesperson,
+            'currentUser' => $user,
             'availableProducts' => $this->getProductOptions($orderProductIds),
             'paginationInfo' => $paginationInfo,
             'order' => [
                 'id' => $order->getId(),
                 'order_number' => $order->getOrderNumber(),
                 'customer_id' => $order->getCustomerId(),
+                // ✅ Salesperson Data from Domain/Model
+                'salesperson_id' => $order->getSalespersonId(),
+                'salesperson' => $orderModel->salesperson ? [
+                    'id' => $orderModel->salesperson->id,
+                    'name' => $orderModel->salesperson->name,
+                    'email' => $orderModel->salesperson->email,
+                ] : null,
                 'status' => $order->getStatus()->value,
                 'note' => $order->getNote(),
                 'payment_terms' => $order->getPaymentTerms(),
@@ -263,14 +385,116 @@ class OrderController extends Controller
                 'picking_count' => $orderModel->picking_slips_count ?? 0,
                 'items' => $itemsData,
 
-                // ✅ ส่ง Flags ไป Frontend
+                // ✅ Shipping Flags
                 'is_fully_shipped' => $isFullyShipped,
                 'has_shipped_items' => $hasShippedItems,
                 'shipping_progress' => $totalQty > 0 ? round(($totalShipped / $totalQty) * 100) : 0,
 
-                // ✅ ส่ง Timeline ไป Frontend
+                // ✅ Timeline
                 'timeline' => $timelineData
             ]
+        ]);
+    }
+
+    public function edit(string $id, Request $request): Response
+    {
+        // 1. ดึงข้อมูล Order พร้อมความสัมพันธ์
+        $orderModel = SalesOrderModel::with(['customer', 'items', 'salesperson'])
+            ->withCount('pickingSlips')
+            ->findOrFail($id);
+
+        // 2. ป้องกันการแก้ไขถ้าสถานะจบไปแล้ว (Optional: แล้วแต่ Policy)
+        // if (in_array($orderModel->status, ['cancelled', 'completed'])) {
+        //     return redirect()->route('sales.orders.show', $id);
+        // }
+
+        // 3. เตรียมข้อมูลสำหรับ Dropdown (Customers & Salespersons)
+        $user = $request->user();
+        $canAssignSalesperson = $user->hasRole(['Super Admin', 'Sales Manager']);
+
+        $salespersons = $canAssignSalesperson
+            ? User::role(['Sales Executive', 'Sales Manager'])->orderBy('name')->get(['id', 'name'])
+            : [];
+
+        $customers = Customer::query()
+            ->where('company_id', $user->company_id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'default_salesperson_id', 'payment_terms']);
+
+        // 4. เตรียมข้อมูลสินค้า (Available Products)
+        // ใช้ Helper เดิมที่มีใน Controller
+        $products = $this->getProductOptions();
+
+        // 5. คำนวณสถานะการจัดส่ง (Shipping Status Logic) - เพื่อแสดงใน Tracking Tab
+        $totalQty = 0;
+        $totalShipped = 0;
+        $isFullyShipped = true;
+        $hasShippedItems = false;
+
+        $itemsData = $orderModel->items->map(function ($item) use (&$totalQty, &$totalShipped, &$isFullyShipped, &$hasShippedItems) {
+            $qty = $item->quantity;
+            $shipped = $item->qty_shipped ?? 0;
+
+            $totalQty += $qty;
+            $totalShipped += $shipped;
+
+            if ($shipped > 0) $hasShippedItems = true;
+            if ($shipped < $qty) $isFullyShipped = false;
+
+            return [
+                'id' => $item->id,
+                'product_id' => $item->product_id,
+                'product_name' => $item->product_name,
+                'description' => $item->product_name, // Mapping ให้ตรงกับ Frontend
+                'quantity' => $qty,
+                'qty_shipped' => $shipped,
+                'unit_price' => $item->unit_price,
+                'subtotal' => $item->subtotal,
+                // image_url จะถูกจัดการโดย ProductCombobox ใน Frontend ผ่าน availableProducts
+            ];
+        });
+
+        if ($orderModel->items->isEmpty()) $isFullyShipped = false;
+
+        // 6. ดึงข้อมูล Timeline
+        $timelineData = $this->traceabilityService->getOrderTimeline($id);
+
+        // 7. Pagination Logic (สำหรับปุ่ม Previous/Next)
+        $allIds = SalesOrderModel::orderBy('created_at', 'desc')->pluck('id')->toArray();
+        $currentIndex = array_search($id, $allIds);
+        $paginationInfo = [
+            'current_index' => $currentIndex + 1,
+            'total' => count($allIds),
+            'prev_id' => $allIds[$currentIndex - 1] ?? null,
+            'next_id' => $allIds[$currentIndex + 1] ?? null,
+        ];
+
+        return Inertia::render('Sales/Edit', [
+            'order' => [
+                'id' => $orderModel->id,
+                'order_number' => $orderModel->order_number,
+                'customer_id' => $orderModel->customer_id,
+                'salesperson_id' => $orderModel->salesperson_id,
+                'picking_count' => $orderModel->picking_slips_count ?? 0,
+                'status' => $orderModel->status,
+                'note' => $orderModel->note,
+                'payment_terms' => $orderModel->payment_terms,
+                'total_amount' => (float) $orderModel->total_amount,
+
+                // Shipping Flags
+                'is_fully_shipped' => $isFullyShipped,
+                'has_shipped_items' => $hasShippedItems,
+                'shipping_progress' => $totalQty > 0 ? round(($totalShipped / $totalQty) * 100) : 0,
+
+                'timeline' => $timelineData,
+                'items' => $itemsData,
+            ],
+            'customers' => $customers,
+            'salespersons' => $salespersons,
+            'availableProducts' => $products,
+            'canAssignSalesperson' => $canAssignSalesperson,
+            'currentUser' => $user,
+            'paginationInfo' => $paginationInfo,
         ]);
     }
 

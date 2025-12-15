@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids; // ✅ 1. เพิ่ม Import นี้
+use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 
 class Customer extends Model
@@ -22,9 +23,11 @@ class Customer extends Model
         'tax_id',
         // Financial Fields
         'credit_limit',
+        'payment_terms',
         'outstanding_balance',
         'is_credit_hold',
-        'credit_term_days'
+        'credit_term_days',
+        'default_salesperson_id',
     ];
 
     protected $casts = [
@@ -38,5 +41,11 @@ class Customer extends Model
     public function orders()
     {
         return $this->hasMany(SalesOrderModel::class, 'customer_id');
+    }
+
+    // ✅ [เพิ่ม] Relationship
+    public function defaultSalesperson()
+    {
+        return $this->belongsTo(User::class, 'default_salesperson_id');
     }
 }

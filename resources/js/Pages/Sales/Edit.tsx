@@ -25,11 +25,9 @@ import Breadcrumbs from '@/Components/Breadcrumbs';
 import SmartButton from '@/Components/SmartButton';
 import ProductCombobox from '@/Components/ProductCombobox';
 import ImageViewer from '@/Components/ImageViewer';
-import { Badge } from '@/Components/ui/badge';
 
 // --- Types ---
 interface Product { id: string; name: string; price: number; stock: number; image_url?: string; }
-// ✅ เพิ่ม default_salesperson_id ใน Customer interface
 interface Customer { id: string; name: string; code: string; payment_terms?: string; default_salesperson_id?: number; }
 
 interface OrderItemRow {
@@ -51,15 +49,15 @@ interface Props {
     customers: Customer[];
     availableProducts: Product[];
     paginationInfo?: PaginationInfo | null;
-    // ✅ Props ใหม่สำหรับ Salesperson Feature
     salespersons?: any[];
     canAssignSalesperson?: boolean;
     currentUser?: any;
-    order?: {
+    // ✅ บังคับให้มี order เสมอสำหรับหน้า Edit
+    order: {
         id: string;
         order_number: string;
         customer_id: string;
-        salesperson_id?: string | number; // ✅ เพิ่ม field นี้
+        salesperson_id?: string | number;
         picking_count?: number;
         items: any[];
         status: string;
@@ -70,75 +68,68 @@ interface Props {
         has_shipped_items?: boolean;
         shipping_progress?: number;
         timeline?: any[];
-    } | null;
+    };
 }
 
 const PagerLink = ({ href, disabled, children }: { href: string, disabled: boolean, children: React.ReactNode }) => (
     <Link href={href} preserveScroll className={`flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${disabled ? 'text-gray-300 border-gray-200 cursor-not-allowed pointer-events-none' : 'text-gray-600 border-gray-300 hover:bg-gray-50 hover:text-gray-900'}`}>{children}</Link>
 );
 
-export default function CreateOrder({ auth, customers, availableProducts, order, paginationInfo, salespersons = [], canAssignSalesperson = false, currentUser }: Props) {
+export default function EditOrder({ auth, customers, availableProducts, order, paginationInfo, salespersons = [], canAssignSalesperson = false, currentUser }: Props) {
 
-    const initialItems: OrderItemRow[] = order?.items.map((item: any) => {
+    // ✅ Initialize Items from existing order
+    const initialItems: OrderItemRow[] = order.items.map((item: any) => {
         const productInfo = availableProducts.find(p => p.id === item.product_id);
         return {
             id: item.id,
             product_id: item.product_id,
-            description: item.description,
+            description: item.description || item.product_name, // Fallback if description is missing
             quantity: item.quantity,
             qty_shipped: item.qty_shipped ?? 0,
             unit_price: item.unit_price,
             total: item.total || (item.quantity * item.unit_price),
             image_url: productInfo?.image_url || item.image_url
         };
-    }) || [];
+    });
 
-    const { data, setData, post, put, processing, errors } = useForm({
-        customer_id: order?.customer_id || '',
-        // ✅ Set Default Salesperson: ถ้ามีใน order -> ใช้ค่าเดิม, ถ้าไม่มี -> ใช้ current user
-        salesperson_id: order?.salesperson_id?.toString() || currentUser?.id?.toString() || '',
+    const { data, setData, put, post, processing, errors } = useForm({
+        customer_id: order.customer_id,
+        salesperson_id: order.salesperson_id?.toString() || '',
+        // Note: ในหน้า Edit วันที่อาจจะมาจาก order.created_at หรือ field วันที่ใบเสนอราคาถ้ามี
         order_date: new Date().toISOString().split('T')[0],
-        expiration_date: '',
-        payment_terms: order?.payment_terms || '',
+        payment_terms: order.payment_terms || '',
         items: initialItems,
-        note: order?.note || '',
+        note: order.note || '',
         action: 'save'
     });
 
     const [openCustomer, setOpenCustomer] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // ✅ Logic Flags
-    const isConfirmed = order?.status === 'confirmed';
-    const isCancelled = order?.status === 'cancelled';
-    const isReadOnly = order ? ['cancelled', 'completed'].includes(order.status) : false;
-    const isEditMode = !!order;
-    const isFullyShipped = order?.is_fully_shipped ?? false;
-    const hasShippedItems = order?.has_shipped_items ?? false;
+    // Flags
+    const isConfirmed = order.status === 'confirmed';
+    const isCancelled = order.status === 'cancelled';
+    const isReadOnly = ['cancelled', 'completed'].includes(order.status);
+    const isFullyShipped = order.is_fully_shipped ?? false;
+    const hasShippedItems = order.has_shipped_items ?? false;
+    // Header read-only condition (Can customize based on business rules)
     const isHeaderReadOnly = isConfirmed || isReadOnly;
 
+    // Calculations
     const calculateSubtotal = () => data.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
     const taxAmount = calculateSubtotal() * 0.07;
     const grandTotal = calculateSubtotal() + taxAmount;
-    const originalTotal = order?.total_amount || 0;
+    const originalTotal = order.total_amount || 0;
     const priceDifference = grandTotal - originalTotal;
 
-    // ✅ Logic: Auto-select Salesperson when Customer changes
     const handleCustomerSelect = (customer: Customer) => {
-        // เตรียมข้อมูลที่จะ update
         let newData: any = { customer_id: customer.id };
-
-        // ถ้า Payment terms ของลูกค้ามีให้ใช้
         if (customer.payment_terms) {
             newData.payment_terms = customer.payment_terms;
         }
-
-        // Auto-select Salesperson logic (ถ้ามีสิทธิ์เปลี่ยน และลูกค้ามี Default)
         if (canAssignSalesperson && customer.default_salesperson_id) {
             newData.salesperson_id = customer.default_salesperson_id.toString();
         }
-
-        // อัปเดต state ทีเดียว
         setData((prev) => ({ ...prev, ...newData }));
         setOpenCustomer(false);
     };
@@ -169,7 +160,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
     const restoreItem = (index: number) => {
         const newItems = [...data.items];
         newItems[index].quantity = 1;
-        newItems[index].total = newItems[index].unit_price;
+        newItems[index].total = newItems[index].unit_price; // Recalculate total if needed
         setData('items', newItems);
     };
 
@@ -177,8 +168,8 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
         const newItems = [...data.items];
         const row = newItems[index];
 
-        if (isConfirmed && row.quantity === 0 && field !== 'quantity') return;
-        if (isConfirmed && row.id && field === 'product_id') return;
+        if (isConfirmed && row.quantity === 0 && field !== 'quantity') return; // Cancelled item locked
+        if (isConfirmed && row.id && field === 'product_id') return; // Cannot change product of existing line
 
         if (field === 'quantity' && value < (row.qty_shipped || 0)) {
             alert(`จำนวนสินค้าต้องไม่น้อยกว่าที่จัดส่งไปแล้ว (${row.qty_shipped})`);
@@ -200,15 +191,17 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
         setData('items', newItems);
     };
 
+    // ✅ Handle Update
     const handleSubmit = (actionType: 'save' | 'confirm') => {
         setIsSubmitting(true);
         const payload = { ...data, action: actionType };
-        const options = { onSuccess: () => setIsSubmitting(false), onError: () => setIsSubmitting(false), preserveScroll: true };
-        if (!order) {
-            router.post(route('sales.orders.store'), payload, options);
-        } else {
-            router.put(route('sales.orders.update', order.id), payload, options);
-        }
+        const options = {
+            onSuccess: () => setIsSubmitting(false),
+            onError: () => setIsSubmitting(false),
+            preserveScroll: true
+        };
+        // Always PUT for Edit page
+        put(route('sales.orders.update', order.id), payload, options);
     };
 
     const handleCancelOrder = () => {
@@ -216,33 +209,34 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
             alert("ไม่สามารถยกเลิกออเดอร์ที่มีการจัดส่งแล้วได้ กรุณาทำใบคืนสินค้า (Return Note) แทน");
             return;
         }
-        if (confirm("ยืนยันการยกเลิกออเดอร์นี้?")) router.post(route('sales.orders.cancel', order!.id));
+        if (confirm("ยืนยันการยกเลิกออเดอร์นี้?")) {
+            post(route('sales.orders.cancel', order.id)); // Use post from inertia helper
+        }
     };
 
-    // Helper to calculate totals for dashboard
+    // Dashboard Helpers
     const getTotalOrdered = () => data.items.reduce((s, i) => s + i.quantity, 0);
     const getTotalShipped = () => data.items.reduce((s, i) => s + (i.qty_shipped || 0), 0);
     const getBackorder = () => data.items.reduce((s, i) => s + Math.max(0, i.quantity - (i.qty_shipped || 0)), 0);
 
     return (
         <AuthenticatedLayout user={auth.user} navigationMenu={<SalesNavigationMenu />}>
-            <Head title={order ? `${order.order_number}` : "New Quotation"} />
+            <Head title={`Edit Order ${order.order_number}`} />
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-2">
-                <Breadcrumbs links={[{ label: 'Sales Orders', href: route('sales.index') }]} activeLabel={order ? order.order_number : 'New Quotation'} />
+                <Breadcrumbs links={[{ label: 'Sales Orders', href: route('sales.index') }]} activeLabel={order.order_number} />
             </div>
 
             <div className="max-w-7xl mx-auto bg-white border-b px-6 py-3 flex justify-between items-center sticky top-0 z-10 shadow-sm">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center">
-                        {order && (
-                            <a href={route('sales.orders.pdf', order.id)} target="_blank" className="mr-1">
-                                <Button variant="outline" className="gap-2">
-                                    <Printer className="w-4 h-4" /> PDF
-                                </Button>
-                            </a>
-                        )}
+                        <a href={route('sales.orders.pdf', order.id)} target="_blank" className="mr-1">
+                            <Button variant="outline" className="gap-2">
+                                <Printer className="w-4 h-4" /> PDF
+                            </Button>
+                        </a>
                         <Button variant="outline" className='mr-1' disabled>Send by Email</Button>
+
                         {!isCancelled && (
                             <>
                                 {!isReadOnly && (
@@ -263,7 +257,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     </div>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
-                                                    <p>{hasShippedItems ? "Cannot update: Items already shipped" : (isConfirmed ? "Update Changes" : "Save Draft")}</p>
+                                                    <p>{hasShippedItems ? "Cannot update: Items already shipped" : (isConfirmed ? "Update Changes" : "Save Changes")}</p>
                                                 </TooltipContent>
                                             </Tooltip>
                                         </TooltipProvider>
@@ -291,7 +285,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                 )}
                             </>
                         )}
-                        {order && !isCancelled && (
+                        {!isCancelled && !hasShippedItems && !isReadOnly && (
                             <TooltipProvider>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
@@ -299,16 +293,15 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                             <Button
                                                 variant="outline"
                                                 size={"icon"}
-                                                className={cn("ml-1", hasShippedItems || isReadOnly ? "text-gray-300 border-gray-200" : "text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700")}
+                                                className="ml-1 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
                                                 onClick={handleCancelOrder}
-                                                disabled={hasShippedItems || isReadOnly}
                                             >
                                                 <XCircle className="h-4 w-4" />
                                             </Button>
                                         </div>
                                     </TooltipTrigger>
                                     <TooltipContent>
-                                        <p>{hasShippedItems ? "Cannot cancel: Items already shipped" : "Cancel Order"}</p>
+                                        <p>Cancel Order</p>
                                     </TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
@@ -316,7 +309,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                     </div>
                 </div>
                 <div className="flex items-center gap-4">
-                    {order && order.picking_count !== undefined && order.picking_count > 0 && <SmartButton label="Delivery" value={order.picking_count} icon={Truck} href={route('logistics.picking.index', { search: order.order_number })} className="h-12 px-3 text-sm border-gray-200 shadow-none hover:bg-gray-50" />}
+                    {order.picking_count !== undefined && order.picking_count > 0 && <SmartButton label="Delivery" value={order.picking_count} icon={Truck} href={route('logistics.picking.index', { search: order.order_number })} className="h-12 px-3 text-sm border-gray-200 shadow-none hover:bg-gray-50" />}
                 </div>
                 <div className="flex">
                     <div className="flex items-center text-sm font-medium text-gray-500">
@@ -324,13 +317,13 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             <span className="px-3 py-1 rounded-md bg-red-100 text-red-700 border border-red-200 font-bold flex items-center gap-2"><XCircle className="h-4 w-4" /> CANCELLED</span>
                         ) : (
                             <>
-                                <span className={cn("px-2 py-1 rounded-md border transition-colors", (!order || order.status === 'draft') ? "text-purple-700 font-bold bg-purple-50 border-purple-200" : "text-gray-500 border-transparent")}>Quotation</span>
+                                <span className={cn("px-2 py-1 rounded-md border transition-colors", (order.status === 'draft') ? "text-purple-700 font-bold bg-purple-50 border-purple-200" : "text-gray-500 border-transparent")}>Quotation</span>
                                 <ChevronRight className="h-4 w-4 mx-1" />
-                                <span className={cn("px-2 py-1 rounded-md border transition-colors", (order?.status === 'confirmed') ? "text-green-700 font-bold bg-green-50 border-green-200" : "text-gray-500 border-transparent")}>Sales Order</span>
+                                <span className={cn("px-2 py-1 rounded-md border transition-colors", (order.status === 'confirmed') ? "text-green-700 font-bold bg-green-50 border-green-200" : "text-gray-500 border-transparent")}>Sales Order</span>
                             </>
                         )}
                     </div>
-                    {paginationInfo && <div className="flex items-center gap-2 ml-2 border-l pl-4 h-8"><span className="text-sm font-medium text-gray-500 mr-2">{paginationInfo.current_index} / {paginationInfo.total}</span><PagerLink href={paginationInfo.prev_id ? route('sales.orders.show', paginationInfo.prev_id) : '#'} disabled={!paginationInfo.prev_id}><ChevronLeft className="w-4 h-4" /></PagerLink><PagerLink href={paginationInfo.next_id ? route('sales.orders.show', paginationInfo.next_id) : '#'} disabled={!paginationInfo.next_id}><ChevronRight className="w-4 h-4" /></PagerLink></div>}
+                    {paginationInfo && <div className="flex items-center gap-2 ml-2 border-l pl-4 h-8"><span className="text-sm font-medium text-gray-500 mr-2">{paginationInfo.current_index} / {paginationInfo.total}</span><PagerLink href={paginationInfo.prev_id ? route('sales.orders.edit', paginationInfo.prev_id) : '#'} disabled={!paginationInfo.prev_id}><ChevronLeft className="w-4 h-4" /></PagerLink><PagerLink href={paginationInfo.next_id ? route('sales.orders.edit', paginationInfo.next_id) : '#'} disabled={!paginationInfo.next_id}><ChevronRight className="w-4 h-4" /></PagerLink></div>}
                 </div>
             </div>
 
@@ -341,7 +334,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                         <Tabs defaultValue="details" className="w-full">
                             <TabsList className="grid w-full grid-cols-2 lg:w-[400px] mb-4">
                                 <TabsTrigger value="details">Order Details</TabsTrigger>
-                                {isEditMode && <TabsTrigger value="tracking">History & Tracking</TabsTrigger>}
+                                <TabsTrigger value="tracking">History & Tracking</TabsTrigger>
                             </TabsList>
 
                             {/* --- TAB 1: DETAILS --- */}
@@ -358,7 +351,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                 <Popover open={!isHeaderReadOnly && openCustomer} onOpenChange={setOpenCustomer}>
                                                     <PopoverTrigger asChild>
                                                         <Button variant="outline" role="combobox" disabled={isHeaderReadOnly} className={cn("w-full justify-between pl-3 text-left font-normal", !data.customer_id && "text-muted-foreground")}>
-                                                            {data.customer_id ? customers.find((c: Customer) => c.id === data.customer_id)?.name : "Search for a customer..."}
+                                                            {data.customer_id ? customers.find((c) => c.id === data.customer_id)?.name : "Search for a customer..."}
                                                             {!isHeaderReadOnly && <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}
                                                         </Button>
                                                     </PopoverTrigger>
@@ -368,7 +361,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                             <CommandList>
                                                                 <CommandEmpty>No customer found.</CommandEmpty>
                                                                 <CommandGroup>
-                                                                    {customers.map((customer: Customer) => (
+                                                                    {customers.map((customer) => (
                                                                         <CommandItem key={customer.id} value={customer.name} onSelect={() => handleCustomerSelect(customer)}>
                                                                             <Check className={cn("mr-2 h-4 w-4", data.customer_id === customer.id ? "opacity-100" : "opacity-0")} />
                                                                             {customer.name}
@@ -383,7 +376,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                             </div>
                                         </div>
 
-                                        {/* ✅ Salesperson Select */}
+                                        {/* Salesperson Select */}
                                         <div className="grid grid-cols-3 items-center gap-4">
                                             <Label className="text-right font-medium flex items-center justify-end gap-2">
                                                 <UserIcon className="w-4 h-4 text-gray-500" /> Salesperson
@@ -398,13 +391,11 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                         <SelectValue placeholder="Select Salesperson" />
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        {/* Current User Option */}
                                                         {currentUser && (
                                                             <SelectItem value={currentUser.id.toString()}>
                                                                 {currentUser.name} {currentUser.id.toString() === data.salesperson_id ? '(Me)' : ''}
                                                             </SelectItem>
                                                         )}
-                                                        {/* Other Salespersons (Manager Only) */}
                                                         {salespersons.map((sp: any) => (
                                                             sp.id !== currentUser?.id && (
                                                                 <SelectItem key={sp.id} value={sp.id.toString()}>
@@ -414,9 +405,6 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
-                                                {!canAssignSalesperson && !isHeaderReadOnly && (
-                                                    <p className="text-[10px] text-gray-400 mt-1 text-right">Only managers can reassign.</p>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -438,7 +426,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     <TableHead className="w-[35%]">Product</TableHead>
                                                     <TableHead className="w-[25%]">Description</TableHead>
                                                     <TableHead className="w-[10%] text-right">Quantity</TableHead>
-                                                    {isEditMode && <TableHead className="w-[10%] text-right text-blue-600 bg-blue-50/30">Delivered</TableHead>}
+                                                    <TableHead className="w-[10%] text-right text-blue-600 bg-blue-50/30">Delivered</TableHead>
                                                     <TableHead className="w-[10%] text-right">Unit Price</TableHead>
                                                     <TableHead className="w-[10%] text-right">Subtotal</TableHead>
                                                     <TableHead className="w-[5%]"></TableHead>
@@ -484,7 +472,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                                                 <PackageX className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
                                                                                 <div>
                                                                                     <p className="font-semibold">Insufficient Stock!</p>
-                                                                                    <p>Missing {stockShortage} units. Order will be set to <span className="font-bold underline">Backorder</span> status.</p>
+                                                                                    <p>Missing {stockShortage} units. Backorder.</p>
                                                                                 </div>
                                                                             </div>
                                                                         )}
@@ -495,13 +483,11 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                             <TableCell className="p-2"><Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} disabled={isItemShipped || isReadOnly} /></TableCell>
 
                                                             {/* Shipped Qty Column */}
-                                                            {isEditMode && (
-                                                                <TableCell className="p-2 text-right align-middle bg-blue-50/10">
-                                                                    <span className={cn("font-bold text-sm", (item.qty_shipped || 0) >= item.quantity ? "text-green-600" : (item.qty_shipped || 0) > 0 ? "text-orange-500" : "text-gray-300")}>
-                                                                        {item.qty_shipped || 0}
-                                                                    </span>
-                                                                </TableCell>
-                                                            )}
+                                                            <TableCell className="p-2 text-right align-middle bg-blue-50/10">
+                                                                <span className={cn("font-bold text-sm", (item.qty_shipped || 0) >= item.quantity ? "text-green-600" : (item.qty_shipped || 0) > 0 ? "text-orange-500" : "text-gray-300")}>
+                                                                    {item.qty_shipped || 0}
+                                                                </span>
+                                                            </TableCell>
 
                                                             <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped || isReadOnly} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} /></TableCell>
                                                             <TableCell className="text-right font-medium p-2 align-middle"><span className={isCancelledItem ? "line-through text-gray-400" : "text-gray-700"}>{item.total.toLocaleString()} ฿</span>{isCancelledItem && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}</TableCell>
@@ -522,7 +508,7 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                                                     );
                                                 })}
                                                 <TableRow>
-                                                    <TableCell colSpan={isEditMode ? 9 : 8} className="p-2">
+                                                    <TableCell colSpan={9} className="p-2">
                                                         {!hasShippedItems && !isFullyShipped && !isReadOnly && (
                                                             <Button variant="ghost" className="text-purple-700 hover:bg-purple-50 w-full justify-start" onClick={addItem}>
                                                                 <Plus className="h-4 w-4 mr-2" /> Add a product
@@ -544,80 +530,78 @@ export default function CreateOrder({ auth, customers, availableProducts, order,
                             </TabsContent>
 
                             {/* --- TAB 2: TRACKING & HISTORY --- */}
-                            {isEditMode && (
-                                <TabsContent value="tracking">
-                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
-                                        {/* Timeline Component */}
-                                        <div className="lg:col-span-1">
-                                            <OrderTimeline events={order.timeline || []} />
-                                        </div>
-
-                                        {/* Summary Stats */}
-                                        <div className="lg:col-span-2 space-y-6">
-                                            <Card>
-                                                <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="w-5 h-5 text-indigo-600" /> Fulfillment Status</CardTitle></CardHeader>
-                                                <CardContent>
-                                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                                                        <div className="p-4 bg-gray-50 rounded-lg border">
-                                                            <div className="text-xs text-gray-500 uppercase font-bold mb-1">Total Ordered</div>
-                                                            <div className="text-3xl font-bold text-gray-800">{getTotalOrdered()}</div>
-                                                        </div>
-                                                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
-                                                            <div className="text-xs text-blue-600 uppercase font-bold mb-1">Shipped</div>
-                                                            <div className="text-3xl font-bold text-blue-700">
-                                                                {getTotalShipped()}
-                                                            </div>
-                                                        </div>
-                                                        <div className="p-4 bg-red-50 rounded-lg border border-red-100">
-                                                            <div className="text-xs text-red-600 uppercase font-bold mb-1">Backorder</div>
-                                                            <div className="text-3xl font-bold text-red-700">
-                                                                {getBackorder()}
-                                                            </div>
-                                                        </div>
-                                                        <div className="p-4 bg-green-50 rounded-lg border border-green-100">
-                                                            <div className="text-xs text-green-600 uppercase font-bold mb-1">Progress</div>
-                                                            <div className="text-3xl font-bold text-green-700">
-                                                                {order.shipping_progress}%
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </CardContent>
-                                            </Card>
-
-                                            {/* Related Documents */}
-                                            <Card>
-                                                <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5 text-gray-500" /> Related Documents</CardTitle></CardHeader>
-                                                <CardContent>
-                                                    <div className="space-y-4">
-                                                        {order.picking_count ? (
-                                                            <div className="flex items-center justify-between p-3 bg-white border rounded-lg hover:shadow-sm transition-shadow">
-                                                                <div className="flex items-center gap-3">
-                                                                    <div className="p-2 bg-indigo-50 rounded-full text-indigo-600"><Package className="w-5 h-5" /></div>
-                                                                    <div>
-                                                                        <p className="font-bold text-sm">Picking Slips</p>
-                                                                        <p className="text-xs text-gray-500">{order.picking_count} document(s) generated</p>
-                                                                    </div>
-                                                                </div>
-                                                                <Link href={route('logistics.picking.index', { search: order.order_number })}>
-                                                                    <Button variant="outline" size="sm">View</Button>
-                                                                </Link>
-                                                            </div>
-                                                        ) : (
-                                                            <p className="text-sm text-gray-400 italic text-center py-4">No logistics documents generated yet.</p>
-                                                        )}
-                                                    </div>
-                                                </CardContent>
-                                            </Card>
-                                        </div>
+                            <TabsContent value="tracking">
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                                    {/* Timeline Component */}
+                                    <div className="lg:col-span-1">
+                                        <OrderTimeline events={order.timeline || []} />
                                     </div>
-                                </TabsContent>
-                            )}
+
+                                    {/* Summary Stats */}
+                                    <div className="lg:col-span-2 space-y-6">
+                                        <Card>
+                                            <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="w-5 h-5 text-indigo-600" /> Fulfillment Status</CardTitle></CardHeader>
+                                            <CardContent>
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                                    <div className="p-4 bg-gray-50 rounded-lg border">
+                                                        <div className="text-xs text-gray-500 uppercase font-bold mb-1">Total Ordered</div>
+                                                        <div className="text-3xl font-bold text-gray-800">{getTotalOrdered()}</div>
+                                                    </div>
+                                                    <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                                                        <div className="text-xs text-blue-600 uppercase font-bold mb-1">Shipped</div>
+                                                        <div className="text-3xl font-bold text-blue-700">
+                                                            {getTotalShipped()}
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-4 bg-red-50 rounded-lg border border-red-100">
+                                                        <div className="text-xs text-red-600 uppercase font-bold mb-1">Backorder</div>
+                                                        <div className="text-3xl font-bold text-red-700">
+                                                            {getBackorder()}
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-4 bg-green-50 rounded-lg border border-green-100">
+                                                        <div className="text-xs text-green-600 uppercase font-bold mb-1">Progress</div>
+                                                        <div className="text-3xl font-bold text-green-700">
+                                                            {order.shipping_progress}%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        {/* Related Documents */}
+                                        <Card>
+                                            <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5 text-gray-500" /> Related Documents</CardTitle></CardHeader>
+                                            <CardContent>
+                                                <div className="space-y-4">
+                                                    {order.picking_count ? (
+                                                        <div className="flex items-center justify-between p-3 bg-white border rounded-lg hover:shadow-sm transition-shadow">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="p-2 bg-indigo-50 rounded-full text-indigo-600"><Package className="w-5 h-5" /></div>
+                                                                <div>
+                                                                    <p className="font-bold text-sm">Picking Slips</p>
+                                                                    <p className="text-xs text-gray-500">{order.picking_count} document(s) generated</p>
+                                                                </div>
+                                                            </div>
+                                                            <Link href={route('logistics.picking.index', { search: order.order_number })}>
+                                                                <Button variant="outline" size="sm">View</Button>
+                                                            </Link>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm text-gray-400 italic text-center py-4">No logistics documents generated yet.</p>
+                                                    )}
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    </div>
+                                </div>
+                            </TabsContent>
                         </Tabs>
 
                     </CardContent>
                 </Card>
             </div>
-            <div className="max-w-7xl mx-auto"><div className="bg-white rounded-lg border shadow-sm p-6"><h3 className="text-lg font-medium mb-4 border-b pb-2">Communication History</h3><Chatter modelType="sales_order" modelId={order?.id || ""} /></div></div>
+            <div className="max-w-7xl mx-auto"><div className="bg-white rounded-lg border shadow-sm p-6"><h3 className="text-lg font-medium mb-4 border-b pb-2">Communication History</h3><Chatter modelType="sales_order" modelId={order.id} /></div></div>
         </AuthenticatedLayout>
     );
 }

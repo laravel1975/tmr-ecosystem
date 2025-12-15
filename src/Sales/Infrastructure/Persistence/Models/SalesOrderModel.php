@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use TmrEcosystem\Customers\Infrastructure\Persistence\Models\Customer;
+use TmrEcosystem\IAM\Domain\Models\User;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\DeliveryNote;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
 use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\ReturnNote;
@@ -32,6 +33,12 @@ class SalesOrderModel extends Model
     public function items(): HasMany
     {
         return $this->hasMany(SalesOrderItemModel::class, 'order_id');
+    }
+
+    // ✅ [เพิ่ม] Relationship
+    public function salesperson()
+    {
+        return $this->belongsTo(User::class, 'salesperson_id');
     }
 
     // ✅ [เพิ่ม] ความสัมพันธ์กับ Customer

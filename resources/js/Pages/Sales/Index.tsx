@@ -1,28 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import SalesNavigationMenu from './Partials/SalesNavigationMenu';
-import SearchFilter from '@/Components/SearchFilter'; // ✅ นำ Component ที่คุณให้มาใช้
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/Components/ui/table";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/Components/ui/dropdown-menu";
 import { Button } from "@/Components/ui/button";
+import { Input } from "@/Components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/Components/ui/table";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/Components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/Components/ui/select";
 import { Badge } from "@/Components/ui/badge";
-import { MoreHorizontal, Eye, Pencil, Trash2, Plus, FileText } from "lucide-react";
-import { debounce } from 'lodash'; // แนะนำให้ลง lodash หรือเขียน debounce fn เอง
+import { MoreHorizontal, Eye, Pencil, Trash2, Plus, Search, User as UserIcon } from "lucide-react";
+import { debounce } from 'lodash';
 
 // --- Types ---
 interface Order {
@@ -30,12 +17,16 @@ interface Order {
     order_number: string;
     customer_id: string;
     customer_code: string;
-    code: string;
     customer_name: string;
     status: string;
     total_amount: number;
     currency: string;
     created_at: string;
+    // ✅ เพิ่ม salesperson info
+    salesperson?: {
+        id: number;
+        name: string;
+    };
 }
 
 interface Props {
@@ -48,39 +39,49 @@ interface Props {
     };
     filters: {
         search: string;
+        my_orders?: boolean;     // ✅ New Filter
+        salesperson_id?: string; // ✅ New Filter
     };
+    salespersons: any[]; // ✅ List for Manager
+    canViewAll: boolean; // ✅ Permission Flag
 }
 
-export default function Index({ auth, orders, filters }: Props) {
-    // State สำหรับ Search
+export default function Index({ auth, orders, filters, salespersons, canViewAll }: Props) {
     const [search, setSearch] = useState(filters.search || '');
 
-    // ฟังก์ชันค้นหาแบบ Debounce (หน่วงเวลา 300ms เพื่อไม่ให้ยิง request ถี่เกินไป)
-    const debouncedSearch = useCallback(
-        debounce((query: string) => {
+    // Search Handler
+    const handleSearch = useCallback(
+        debounce((newFilters: any) => {
             router.get(
                 route('sales.orders.index'),
-                { search: query },
+                { ...filters, ...newFilters }, // Merge old & new filters
                 { preserveState: true, replace: true }
             );
         }, 300),
-        []
+        [filters] // Dependency on filters so we don't lose other filter states
     );
 
-    // เมื่อค่า search เปลี่ยน ให้เรียก debouncedSearch
-    const handleSearchChange = (val: string) => {
+    const onSearchChange = (val: string) => {
         setSearch(val);
-        debouncedSearch(val);
+        handleSearch({ search: val });
     };
 
-    // ฟังก์ชัน Delete
+    // Filter Handlers
+    const handleMyOrdersToggle = () => {
+        const newValue = !filters.my_orders;
+        router.get(route('sales.orders.index'), { ...filters, my_orders: newValue ? '1' : '' }, { preserveState: true, replace: true });
+    };
+
+    const handleSalespersonChange = (val: string) => {
+        router.get(route('sales.orders.index'), { ...filters, salesperson_id: val === 'all' ? '' : val }, { preserveState: true, replace: true });
+    };
+
     const handleDelete = (id: string) => {
         if (confirm('Are you sure you want to delete this order?')) {
             router.delete(route('sales.orders.destroy', id));
         }
     };
 
-    // Helper: Status Color
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'draft': return 'bg-gray-500';
@@ -91,7 +92,6 @@ export default function Index({ auth, orders, filters }: Props) {
         }
     };
 
-    // Helper: Currency Format
     const formatCurrency = (amount: number, currency: string) => {
         return new Intl.NumberFormat('th-TH', {
             style: 'currency',
@@ -99,26 +99,20 @@ export default function Index({ auth, orders, filters }: Props) {
         }).format(amount);
     };
 
-    console.log(orders)
-
     return (
-        <AuthenticatedLayout
-            user={auth.user}
-            navigationMenu={<SalesNavigationMenu />}
-        >
+        <AuthenticatedLayout user={auth.user} navigationMenu={<SalesNavigationMenu />}>
             <Head title="Sales Orders" />
 
             <div className="py-12">
                 <div className="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6">
 
-                    {/* --- Header & Actions --- */}
+                    {/* Header */}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div>
                             <h2 className="text-2xl font-bold tracking-tight text-gray-900">Sales Orders</h2>
                             <p className="text-sm text-muted-foreground">Manage your quotations and orders.</p>
                         </div>
                         <div className="flex items-center gap-2">
-                            {/* ปุ่ม Create */}
                             <Button asChild className="bg-purple-700 hover:bg-purple-800">
                                 <Link href={route('sales.orders.create')}>
                                     <Plus className="mr-2 h-4 w-4" /> Create Order
@@ -127,37 +121,70 @@ export default function Index({ auth, orders, filters }: Props) {
                         </div>
                     </div>
 
-                    {/* --- Filters --- */}
-                    <div className="bg-white p-4 rounded-lg border shadow-sm flex items-center gap-4">
-                        <div className="w-full sm:w-72">
-                            {/* ✅ ใช้ SearchFilter Component ตรงนี้ */}
-                            <SearchFilter
-                                value={search}
-                                onChange={handleSearchChange}
+                    {/* ✅ Filters Toolbar */}
+                    <div className="bg-white p-4 rounded-lg border shadow-sm flex flex-col md:flex-row items-center gap-4">
+                        <div className="flex-1 w-full relative">
+                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                            <Input
                                 placeholder="Search order number, customer..."
-                                className="w-full"
+                                value={search}
+                                onChange={(e) => onSearchChange(e.target.value)}
+                                className="pl-9 w-full"
                             />
                         </div>
-                        {/* สามารถเพิ่ม Filter อื่นๆ เช่น Status Date ตรงนี้ได้ */}
+
+                        <div className="flex items-center gap-2 w-full md:w-auto">
+                            {/* My Orders Toggle */}
+                            <Button
+                                variant={filters.my_orders ? "default" : "outline"}
+                                size="sm"
+                                onClick={handleMyOrdersToggle}
+                                className="gap-2 whitespace-nowrap"
+                            >
+                                <UserIcon className="w-4 h-4" /> My Orders
+                            </Button>
+
+                            {/* Manager Filter */}
+                            {canViewAll && (
+                                <Select
+                                    value={filters.salesperson_id || "all"}
+                                    onValueChange={handleSalespersonChange}
+                                >
+                                    <SelectTrigger className="w-[200px]">
+                                        <SelectValue placeholder="Filter by Salesperson" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Salespersons</SelectItem>
+                                        {salespersons.map((sp: any) => (
+                                            <SelectItem key={sp.id} value={sp.id.toString()}>
+                                                {sp.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
+                        </div>
                     </div>
 
-                    {/* --- Data Table --- */}
+                    {/* Table */}
                     <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
                         <Table>
                             <TableHeader>
                                 <TableRow className="bg-gray-50">
-                                    <TableHead className="w-[180px]">Order Number</TableHead>
+                                    <TableHead className="w-[150px]">Order Number</TableHead>
                                     <TableHead>Customer</TableHead>
+                                    {/* ✅ Salesperson Column */}
+                                    <TableHead>Salesperson</TableHead>
                                     <TableHead>Date</TableHead>
-                                    <TableHead>Total</TableHead>
-                                    <TableHead>Status</TableHead>
+                                    <TableHead className="text-right">Total</TableHead>
+                                    <TableHead className="text-center">Status</TableHead>
                                     <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {orders.data.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="h-24 text-center">
+                                        <TableCell colSpan={7} className="h-24 text-center text-gray-500">
                                             No orders found.
                                         </TableCell>
                                     </TableRow>
@@ -170,36 +197,36 @@ export default function Index({ auth, orders, filters }: Props) {
                                                 </Link>
                                             </TableCell>
                                             <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-xs font-bold">
-                                                        {/* ใช้ชื่อลูกค้าตัวแรกมาทำ Avatar */}
-                                                        {(order.customer_name || 'Unknown').substring(0, 2)}
-                                                    </div>
-                                                    <div className="flex flex-col-reverse">
-                                                        {/* ✅ แสดงชื่อลูกค้าแทน ID */}
-                                                        <span className="font-medium text-gray-900">
-                                                            {order.customer_name || 'Unknown Customer'}
-                                                        </span>
-                                                        {/* Optional: แสดงรหัสลูกค้าตัวเล็กๆ ต่อท้าย */}
-                                                        <span className="text-xs text-gray-400">{order.customer_code}</span>
-                                                    </div>
-
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium text-gray-900">{order.customer_name || 'Unknown'}</span>
+                                                    <span className="text-xs text-gray-400">{order.customer_code}</span>
                                                 </div>
                                             </TableCell>
+
+                                            {/* ✅ Salesperson Display */}
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600 border">
+                                                        {order.salesperson?.name?.charAt(0) || '?'}
+                                                    </div>
+                                                    <span className="text-sm text-gray-600">
+                                                        {order.salesperson?.name || <span className="text-gray-400 italic">Unassigned</span>}
+                                                    </span>
+                                                </div>
+                                            </TableCell>
+
                                             <TableCell className="text-gray-500">
                                                 {new Date(order.created_at).toLocaleDateString('th-TH')}
                                             </TableCell>
-                                            <TableCell className="font-medium">
+                                            <TableCell className="text-right font-mono font-medium">
                                                 {formatCurrency(order.total_amount, order.currency)}
                                             </TableCell>
-                                            <TableCell>
+                                            <TableCell className="text-center">
                                                 <Badge className={`${getStatusColor(order.status)} hover:${getStatusColor(order.status)}`}>
                                                     {order.status.toUpperCase()}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right">
-
-                                                {/* ✅ Action Dropdown Menu */}
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger asChild>
                                                         <Button variant="ghost" className="h-8 w-8 p-0">
@@ -209,37 +236,22 @@ export default function Index({ auth, orders, filters }: Props) {
                                                     </DropdownMenuTrigger>
                                                     <DropdownMenuContent align="end">
                                                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
-
-                                                        {/* 1. View Detail */}
                                                         <DropdownMenuItem asChild>
                                                             <Link href={route('sales.orders.show', order.id)} className="cursor-pointer flex w-full items-center">
-                                                                <Eye className="mr-2 h-4 w-4 text-gray-500" />
-                                                                View Detail
+                                                                <Eye className="mr-2 h-4 w-4 text-gray-500" /> View Detail
                                                             </Link>
                                                         </DropdownMenuItem>
-
-                                                        {/* 2. Edit */}
                                                         <DropdownMenuItem asChild>
-                                                            {/* ตรวจสอบว่ามี route edit หรือยัง ถ้าไม่มีให้เปลี่ยนเป็น create ที่ส่ง id */}
-                                                            <Link href={route('sales.orders.show', order.id)} className="cursor-pointer flex w-full items-center">
-                                                                <Pencil className="mr-2 h-4 w-4 text-blue-500" />
-                                                                Edit
+                                                            <Link href={route('sales.orders.edit', order.id)} className="cursor-pointer flex w-full items-center">
+                                                                <Pencil className="mr-2 h-4 w-4 text-blue-500" /> Edit
                                                             </Link>
                                                         </DropdownMenuItem>
-
                                                         <DropdownMenuSeparator />
-
-                                                        {/* 3. Delete */}
-                                                        <DropdownMenuItem
-                                                            onClick={() => handleDelete(order.id)}
-                                                            className="text-red-600 cursor-pointer focus:text-red-600 focus:bg-red-50"
-                                                        >
-                                                            <Trash2 className="mr-2 h-4 w-4" />
-                                                            Delete
+                                                        <DropdownMenuItem onClick={() => handleDelete(order.id)} className="text-red-600 cursor-pointer focus:text-red-600 focus:bg-red-50">
+                                                            <Trash2 className="mr-2 h-4 w-4" /> Delete
                                                         </DropdownMenuItem>
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
-
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -248,9 +260,11 @@ export default function Index({ auth, orders, filters }: Props) {
                         </Table>
                     </div>
 
-                    {/* --- Pagination --- */}
+                    {/* Pagination */}
                     <div className="flex items-center justify-between">
-                        {/* Simple Pagination Logic */}
+                        <div className="text-sm text-gray-500">
+                            Page {orders.current_page} of {orders.last_page}
+                        </div>
                         <div className="flex gap-1">
                             {orders.links.map((link, index) => (
                                 <Button
@@ -268,9 +282,6 @@ export default function Index({ auth, orders, filters }: Props) {
                                     )}
                                 </Button>
                             ))}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                            Page {orders.current_page} of {orders.last_page}
                         </div>
                     </div>
 

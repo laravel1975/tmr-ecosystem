@@ -10,17 +10,20 @@ class CreditCheckService
 {
     /**
      * ตรวจสอบว่าลูกค้าสามารถสั่งซื้อยอดนี้ได้หรือไม่
-     * * @param int $customerId
-     * @param float $newOrderAmount ยอดเงินของออร์เดอร์ใหม่ (หรือยอดส่วนต่างที่เพิ่มขึ้น)
+     * * @param string $customerId  // ✅ แก้ Docblock เป็น string
+     * @param float $newOrderAmount
      * @return bool
      * @throws Exception
      */
-    public function canPlaceOrder(int $customerId, float $newOrderAmount): bool
+    // ✅ แก้ Type Hint จาก int เป็น string ให้รองรับ UUID
+    public function canPlaceOrder(string $customerId, float $newOrderAmount): bool
     {
         $customer = Customer::find($customerId);
 
         if (!$customer) {
-            return true; // หรือ throw exception ตาม business rule
+            // ถ้าไม่เจอลูกค้า อาจจะปล่อยผ่านหรือ Error แล้วแต่ Business Logic
+            // ในที่นี้ปล่อยผ่านเพื่อให้ทำงานต่อได้ (หรืออาจจะเป็นลูกค้า Walk-in)
+            return true;
         }
 
         // 1. ถ้าติด Blacklist/Hold ห้ามขาย
@@ -28,25 +31,24 @@ class CreditCheckService
             throw new Exception("Credit Hold: ลูกค้ารายนี้ถูกระงับการสั่งซื้อชั่วคราว");
         }
 
-        // 2. ถ้า Credit Limit เป็น 0 (Unlimited หรือ Cash Only - แล้วแต่ตกลง)
-        // สมมติ: 0 คือ Unlimited ในเคสนี้
+        // 2. ถ้า Credit Limit เป็น 0 (Unlimited หรือ Cash Only)
         if ($customer->credit_limit <= 0) {
             return true;
         }
 
-        // 3. คำนวณยอดหนี้รวม = หนี้เก่า + ออร์เดอร์ที่รอส่ง (Open Orders) + ยอดใหม่
-        // หมายเหตุ: outstanding_balance ควร update จากระบบบัญชี/การเงิน
-        // แต่ที่นี่เราจะรวมยอด Sales Order ที่ยังไม่จบ (pending, confirmed) เข้าไปคิดด้วยเพื่อความชัวร์
-
+        // 3. คำนวณยอดหนี้รวม
+        // ดึงยอดจากออร์เดอร์ที่ยังไม่เสร็จสิ้น (Pending/Confirmed)
         $pendingOrdersTotal = SalesOrderModel::where('customer_id', $customerId)
-            ->whereIn('status', ['pending', 'confirmed']) // สถานะที่ยังไม่เกิด Invoice สมบูรณ์
-            ->sum('grand_total');
+            ->whereIn('status', ['draft', 'pending', 'confirmed']) // ✅ เพิ่ม draft เผื่อด้วยถ้าต้องการนับ
+            ->sum('total_amount'); // ✅ แก้จาก 'grand_total' เป็น 'total_amount' ให้ตรงกับ DB
 
+        // ยอดหนี้ปัจจุบัน (จากบัญชี) + ยอดออร์เดอร์ค้างส่ง + ยอดที่จะซื้อใหม่
         $totalExposure = $customer->outstanding_balance + $pendingOrdersTotal + $newOrderAmount;
 
         if ($totalExposure > $customer->credit_limit) {
             $diff = number_format($totalExposure - $customer->credit_limit, 2);
-            throw new Exception("Credit Limit Exceeded: วงเงินไม่พอ (เกินวงเงิน {$diff} บาท)");
+            $limit = number_format($customer->credit_limit, 2);
+            throw new Exception("Credit Limit Exceeded: วงเงินไม่พอ (วงเงิน: {$limit}, ยอดรวมหลังสั่งซื้อ: " . number_format($totalExposure, 2) . ", เกิน: {$diff} บาท)");
         }
 
         return true;

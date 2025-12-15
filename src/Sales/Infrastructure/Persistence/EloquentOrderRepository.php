@@ -23,6 +23,8 @@ class EloquentOrderRepository implements OrderRepositoryInterface
                 'currency' => 'THB',
                 'note' => $order->getNote(),
                 'payment_terms' => $order->getPaymentTerms(),
+                // ✅ [เพิ่ม] บันทึก salesperson_id
+                'salesperson_id' => $order->getSalespersonId(),
             ]
         );
 
@@ -84,6 +86,9 @@ class EloquentOrderRepository implements OrderRepositoryInterface
             // ✅ ส่งค่าจาก DB หรือ Default ถ้าเป็นข้อมูลเก่า
             companyId: $model->company_id ?? 'DEFAULT_COMPANY',
             warehouseId: $model->warehouse_id ?? 'DEFAULT_WAREHOUSE',
+
+            // ✅ เพิ่มบรรทัดนี้
+            salespersonId: $model->salesperson_id,
 
             statusString: $model->status,
             totalAmount: (float) $model->total_amount,

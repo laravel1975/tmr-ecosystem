@@ -15,8 +15,9 @@ readonly class CreateOrderDto
      */
     public function __construct(
         public string $customerId,
-        public string $companyId,   // ✅ เพิ่มตาม Logic ใหม่
-        public string $warehouseId, // ✅ เพิ่มตาม Logic ใหม่
+        public string $companyId,
+        public string $warehouseId,
+        public ?string $salespersonId,
         public array $items,
         public ?string $note = null,
         public ?string $paymentTerms = null,
@@ -24,7 +25,7 @@ readonly class CreateOrderDto
     ) {}
 
     // ✅ ปรับ Factory method ให้รับ Context
-    public static function fromRequest(array $data, string $companyId, string $warehouseId): self
+    public static function fromRequest(array $data, string $companyId, string $warehouseId, ?string $salespersonId = null): self
     {
         $items = array_map(
             fn($item) => new CreateOrderItemDto($item['product_id'], (int)$item['quantity']),
@@ -35,6 +36,7 @@ readonly class CreateOrderDto
             customerId: $data['customer_id'],
             companyId: $companyId,
             warehouseId: $warehouseId,
+            salespersonId: $salespersonId,
             items: $items,
             note: $data['note'] ?? null,
             paymentTerms: $data['payment_terms'] ?? null
