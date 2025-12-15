@@ -5,11 +5,16 @@ use App\Http\Controllers\ProfileController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
+use TmrEcosystem\Customers\Presentation\Http\Controllers\CustomerController;
 use TmrEcosystem\Inventory\Presentation\Http\Controllers\ItemController;
 use TmrEcosystem\Logistics\Presentation\Http\Controllers\PublicTrackingController;
 
 // Public Route (ไม่ต้อง Login)
 Route::get('/track/{token}', [PublicTrackingController::class, 'show'])->name('public.track');
+
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::resource('customers', CustomerController::class);
+});
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [

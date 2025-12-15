@@ -61,6 +61,9 @@ export default function SalesNavigationMenu() {
                         <DropdownMenuItem asChild>
                             <Link href={route('sales.index')}>Sale Orders</Link>
                         </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                            <Link href={route('customers.index')}>Customers</Link>
+                        </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
 
