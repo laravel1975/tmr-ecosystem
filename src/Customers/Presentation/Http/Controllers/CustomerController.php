@@ -50,13 +50,13 @@ class CustomerController extends Controller
 
     public function show(Customer $customer): Response
     {
-        // 1. Recent Orders (ตัด payment_status ออกตามที่เจอปัญหาก่อนหน้า)
+        // 1. Recent Orders
         $recentOrders = $customer->orders()
             ->latest()
             ->take(5)
             ->get(['id', 'order_number', 'total_amount', 'status', 'created_at']);
 
-        // 2. Stats (แก้ grand_total -> total_amount)
+        // 2. Stats
         $confirmedOrders = $customer->orders()->whereIn('status', ['confirmed', 'completed']);
         $stats = [
             'total_sales' => $confirmedOrders->sum('total_amount'),
@@ -65,12 +65,12 @@ class CustomerController extends Controller
             'last_order_date' => $customer->orders()->latest()->value('created_at'),
         ];
 
-        // 3. Top Purchased Products (Permanent Fix Logic)
-        // ใช้ Eloquent Model เพื่ออ้างอิงตารางได้ถูกต้องแม่นยำ
+        // 3. Top Products (แก้ไข Join ให้ถูกต้อง)
         $topProducts = SalesOrderItemModel::query()
-            ->join('sales_orders', 'sales_order_items.sales_order_id', '=', 'sales_orders.id')
+            // ✅ แก้ตรงนี้: ใช้ 'order_id' ตามที่ระบุใน SalesOrderItemModel
+            ->join('sales_orders', 'sales_order_items.order_id', '=', 'sales_orders.id')
             ->where('sales_orders.customer_id', $customer->id)
-            ->whereIn('sales_orders.status', ['confirmed', 'completed'])
+            ->whereIn('sales_orders.status', ['confirmed', 'completed']) // เช็คสถานะที่ถูกต้อง
             ->select(
                 'sales_order_items.product_id',
                 'sales_order_items.product_name',
@@ -90,7 +90,6 @@ class CustomerController extends Controller
             'topProducts' => $topProducts
         ]);
     }
-
     public function edit(Customer $customer): Response
     {
         return Inertia::render('Customers/Edit', [
