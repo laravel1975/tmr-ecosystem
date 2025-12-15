@@ -4,6 +4,7 @@ namespace TmrEcosystem\Sales\Application\UseCases;
 
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; // เพิ่ม Log
 use TmrEcosystem\Sales\Application\DTOs\UpdateOrderDto;
 use TmrEcosystem\Sales\Domain\Aggregates\Order;
 use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
@@ -12,21 +13,36 @@ use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
 use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMessage;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
+use TmrEcosystem\Sales\Domain\Services\CreditCheckService; // ✅ Inject Service
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip; // ✅ Import PickingSlip
 
 class UpdateOrderUseCase
 {
     public function __construct(
         private OrderRepositoryInterface $orderRepository,
-        private ProductCatalogInterface $productCatalog
+        private ProductCatalogInterface $productCatalog,
+        private CreditCheckService $creditCheckService // ✅ Inject Credit Check
     ) {}
 
     public function handle(string $orderId, UpdateOrderDto $dto): Order
     {
+        Log::info("UpdateOrderUseCase: Starting update for Order ID {$orderId}");
+
         $order = $this->orderRepository->findById($orderId);
         if (!$order) throw new Exception("Order not found");
 
         if (in_array($order->getStatus(), [OrderStatus::Cancelled, OrderStatus::Completed])) {
             throw new Exception("Cannot update finalized orders.");
+        }
+
+        // ------------------------------------------------------------------
+        // ✅ [GUARD 1] Logistics Status Check
+        // ห้ามแก้ไข ถ้า Logistics เริ่มทำงานแล้ว (ป้องกันข้อมูลไม่ตรงหน้างาน)
+        // ต้องให้ Logistics ยกเลิก Picking Slip ก่อนถึงจะกลับมาแก้ได้
+        // ------------------------------------------------------------------
+        $pickingSlip = PickingSlip::where('order_id', $order->id)->first();
+        if ($pickingSlip && in_array($pickingSlip->status, ['in_progress', 'done', 'packed', 'shipped'])) {
+            throw new Exception("Cannot update order: Picking process has already started or finished. Please contact warehouse to cancel the picking slip first.");
         }
 
         $oldTotal = $order->getTotalAmount();
@@ -35,6 +51,27 @@ class UpdateOrderUseCase
 
         $productIds = array_map(fn($item) => $item->productId, $dto->items);
         $products = $this->productCatalog->getProductsByIds($productIds);
+
+        // ------------------------------------------------------------------
+        // ✅ [GUARD 2] Pre-Calculate for Financial Control Check
+        // คำนวณยอดใหม่คร่าวๆ เพื่อเช็คเครดิตก่อนเริ่ม Transaction
+        // ------------------------------------------------------------------
+        $newGrandTotal = 0;
+        foreach ($dto->items as $itemDto) {
+             if ($itemDto->quantity <= 0) continue;
+             $product = $products[$itemDto->productId] ?? null;
+             if ($product) {
+                 $newGrandTotal += $product->price * $itemDto->quantity;
+             }
+        }
+
+        // ถ้ายอดใหม่ สูงกว่า ยอดเดิม ให้เช็ควงเงิน
+        // (และต้องเป็นออร์เดอร์ที่ Confirm แล้ว หรือกำลังจะ Confirm)
+        if (($wasConfirmed || $dto->confirmOrder) && $newGrandTotal > $oldTotal) {
+            $increaseAmount = $newGrandTotal - $oldTotal;
+            // เมธอดนี้จะ Throw Exception ถ้าวงเงินไม่พอ
+            $this->creditCheckService->canPlaceOrder($order->getCustomerId(), $increaseAmount);
+        }
 
         return DB::transaction(function () use ($order, $dto, $products, $oldTotal, $orderId, $wasConfirmed) {
 
@@ -87,14 +124,14 @@ class UpdateOrderUseCase
 
             // 1. ถ้าเพิ่ง Confirm -> ยิง OrderConfirmed
             if ($isJustConfirmed) {
-                // ✅ FIX: ส่ง $orderId (String) แทน Object $order
+                // ส่ง $orderId (String) ตามที่ Event ต้องการ
                 OrderConfirmed::dispatch($orderId);
             }
-            // 2. ถ้า Confirmed อยู่แล้วและมีการแก้ไข -> ยิง OrderUpdated
+            // 2. ถ้า Confirmed อยู่แล้วและมีการแก้ไข -> ยิง OrderUpdated เพื่อ Sync Logistics
             elseif ($wasConfirmed) {
-                // หมายเหตุ: ตรวจสอบ Event OrderUpdated ของคุณด้วยว่ารับค่าแบบไหน
-                // ถ้าเป็นไปได้ควรแก้ให้รับ $orderId เหมือนกันเพื่อความ Consistency
-                // แต่ถ้า Event นั้นยังรับ Model อยู่ บรรทัดนี้ก็ใช้ได้ครับ
+                 // ส่ง Object $order (เพราะ SyncLogisticsDocuments.php ใช้ $event->orderId->id หรือ $event->orderId)
+                 // เพื่อความปลอดภัย แนะนำให้แก้ Event OrderUpdated ให้รับ ID อย่างเดียวเหมือนกันในอนาคต
+                 // แต่ ณ ตอนนี้ ส่ง $order ไปก่อนเพื่อให้ Listener ทำงานต่อได้
                 OrderUpdated::dispatch($order);
             }
 

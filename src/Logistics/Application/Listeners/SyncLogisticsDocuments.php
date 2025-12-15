@@ -14,6 +14,7 @@ use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel;
+use TmrEcosystem\Logistics\Domain\Events\PickingSlipUpdated;
 
 class SyncLogisticsDocuments implements ShouldQueue
 {
@@ -30,146 +31,141 @@ class SyncLogisticsDocuments implements ShouldQueue
         $orderId = is_string($event->orderId) ? $event->orderId : ($event->orderId->id ?? null);
         if (!$orderId) return;
 
-        Log::info("SyncLogistics: Checking updates for Order {$orderId}");
+        Log::info("SyncLogistics: Processing updates for Order {$orderId}");
 
         DB::transaction(function () use ($orderId) {
             $order = SalesOrderModel::with('items')->lockForUpdate()->find($orderId);
 
-            // 1. หา Picking Slip ที่ยังแก้ไขได้ (เฉพาะสถานะ pending หรือ assigned)
+            // หา Picking Slip ที่ยังแก้ไขได้ (เฉพาะสถานะ pending หรือ assigned)
             $pickingSlip = PickingSlip::with('items')
                                       ->where('order_id', $orderId)
                                       ->whereIn('status', ['pending', 'assigned'])
                                       ->first();
 
             if (!$pickingSlip) {
-                Log::info("SyncLogistics: No modifiable picking slip found (Status might be picked/shipped). Skipping.");
+                Log::info("SyncLogistics: No modifiable picking slip found. Skipping.");
                 return;
             }
 
-            // 2. ✅ แก้ไข: หา Warehouse ID ให้ชัวร์ (Picking -> Order -> Company Default)
             $warehouseId = $pickingSlip->warehouse_id
                 ?? $order->warehouse_id
                 ?? WarehouseModel::where('company_id', $order->company_id)->value('uuid');
 
             if (!$warehouseId) {
-                Log::error("SyncLogistics: Unknown Warehouse for Order {$orderId}. Cannot sync stock.");
+                Log::error("SyncLogistics: Cannot determine warehouse. Aborting.");
                 return;
             }
 
             $salesItems = $order->items->keyBy('product_id');
             $pickingItems = $pickingSlip->items->keyBy('product_id');
+            $hasChanges = false;
 
-            // --- PART A: Loop รายการใน Picking Slip (เช็ค ลบ หรือ ลดจำนวน) ---
+            // ---------------------------------------------------------
+            // 1. ตรวจสอบการ "ลบ" หรือ "ลดจำนวน" (Picking > Sales)
+            // ---------------------------------------------------------
             foreach ($pickingSlip->items as $pItem) {
                 $productId = $pItem->product_id;
 
                 if (!$salesItems->has($productId)) {
-                    // กรณี: ลบรายการทิ้ง (Removed)
+                    // กรณี A: ลบรายการทิ้ง
                     $this->releaseStock($pItem, $pItem->quantity_requested, $warehouseId);
                     $pItem->delete();
+                    $hasChanges = true;
                     Log::info("SyncLogistics: Removed item {$productId}");
                 } else {
-                    // กรณี: ลดจำนวน (Reduced)
+                    // กรณี B: ลดจำนวน
                     $sItem = $salesItems->get($productId);
-                    $diff = $sItem->quantity - $pItem->quantity_requested; // ถ้าติดลบ แปลว่า Picking เยอะกว่า Order
+                    $diff = $sItem->quantity - $pItem->quantity_requested;
 
-                    if ($diff < 0) {
+                    if ($diff < 0) { // Sales น้อยกว่า Picking
                         $qtyToRelease = abs($diff);
                         $this->releaseStock($pItem, $qtyToRelease, $warehouseId);
 
                         $pItem->quantity_requested = $sItem->quantity;
                         $pItem->save();
+                        $hasChanges = true;
                         Log::info("SyncLogistics: Reduced qty for {$productId} by {$qtyToRelease}");
                     }
                 }
             }
 
-            // --- PART B: Loop รายการใน Sales Order (เช็ค เพิ่มใหม่ หรือ เพิ่มจำนวน) ---
+            // ---------------------------------------------------------
+            // 2. ตรวจสอบการ "เพิ่ม" หรือ "สินค้าใหม่" (Sales > Picking)
+            // ---------------------------------------------------------
             foreach ($order->items as $sItem) {
                 $productId = $sItem->product_id;
 
                 if (!$pickingItems->has($productId)) {
-                    // กรณี: เพิ่มสินค้าใหม่ (New Item)
-                    $this->allocateNewItem($pickingSlip, $sItem, $warehouseId);
-                    Log::info("SyncLogistics: Added new item {$productId}");
+                    // กรณี C: สินค้าใหม่มาเพิ่ม
+                    if ($this->allocateNewItem($pickingSlip, $sItem, $warehouseId)) {
+                        $hasChanges = true;
+                        Log::info("SyncLogistics: Added new item {$productId}");
+                    }
                 } else {
-                    // กรณี: เพิ่มจำนวน (Increased)
+                    // กรณี D: เพิ่มจำนวน
                     $pItem = $pickingItems->get($productId);
                     $diff = $sItem->quantity - $pItem->quantity_requested;
 
-                    if ($diff > 0) {
-                        // จองเพิ่มเท่าที่ทำได้
+                    if ($diff > 0) { // Sales มากกว่า Picking
                         $reserved = $this->allocateMoreStock($pItem, $diff, $warehouseId);
-
-                        // อัปเดตยอด Picking Slip (เพิ่มเท่าที่จองได้)
-                        // หมายเหตุ: ถ้าจองไม่ได้ (ของหมด) ยอดใน Picking จะไม่เพิ่มตาม SO ซึ่งถูกต้องแล้ว (เกิด Backorder โดยปริยาย)
                         if ($reserved > 0) {
                             $pItem->quantity_requested += $reserved;
                             $pItem->save();
+                            $hasChanges = true;
                             Log::info("SyncLogistics: Increased qty for {$productId} by {$reserved}");
-                        } else {
-                            Log::warning("SyncLogistics: Failed to allocate more stock for {$productId} (Out of stock)");
                         }
                     }
                 }
             }
 
-            // ถ้าแก้ไขแล้วไม่เหลือสินค้าเลย ให้ยกเลิก Picking Slip
-            if ($pickingSlip->items()->count() == 0) {
-                $pickingSlip->update(['status' => 'cancelled', 'note' => 'Auto cancelled via Sync (Empty items)']);
+            // ถ้ามีการเปลี่ยนแปลง ให้ส่ง Event เพื่อไปอัพเดท Delivery Note ต่อ
+            if ($hasChanges) {
+                if ($pickingSlip->items()->count() == 0) {
+                    $pickingSlip->update(['status' => 'cancelled', 'note' => 'Auto cancelled (Empty items)']);
+                } else {
+                    $pickingSlip->touch(); // Update updated_at timestamp
+                    event(new PickingSlipUpdated($pickingSlip));
+                    Log::info("SyncLogistics: PickingSlip updated, triggered delivery note sync.");
+                }
             }
         });
     }
 
     /**
-     * ✅ [FIXED] คืนสต๊อก (Release Soft Reserve)
-     * วนหา StockLevel ที่มียอดจอง (Soft Reserve) แล้วคืนยอดกลับไป
+     * ✅ [IMPLEMENTED] คืนสต๊อกจริง (Release Soft Reserve)
      */
     private function releaseStock($pickingItem, $qtyToRelease, $warehouseUuid)
     {
         $inventoryItem = $this->itemLookupService->findByPartNumber($pickingItem->product_id);
         if (!$inventoryItem) return;
 
-        // หา Stock ทั้งหมดของสินค้านี้ใน Warehouse นี้ที่มีการจอง
+        // ดึง StockLevel ที่มียอดจอง (Soft Reserve) ของสินค้านี้ ในคลังนี้
         $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItem->uuid, $warehouseUuid);
+        $remaining = $qtyToRelease;
 
-        $remainingToRelease = $qtyToRelease;
+        foreach ($reservedStocks as $stock) {
+            if ($remaining <= 0) break;
 
-        foreach ($reservedStocks as $stockLevel) {
-            if ($remainingToRelease <= 0) break;
-
-            $reservedInLoc = $stockLevel->getQuantitySoftReserved();
-
-            if ($reservedInLoc > 0) {
-                $amountToRelease = min($reservedInLoc, $remainingToRelease);
-
-                $stockLevel->releaseSoftReservation($amountToRelease);
-                $this->stockRepo->save($stockLevel, []);
-
-                $remainingToRelease -= $amountToRelease;
+            $availableInLoc = $stock->getQuantitySoftReserved();
+            if ($availableInLoc > 0) {
+                $amount = min($availableInLoc, $remaining);
+                $stock->releaseSoftReservation($amount);
+                $this->stockRepo->save($stock, []);
+                $remaining -= $amount;
             }
         }
     }
 
-    /**
-     * ✅ [FIXED] จองสต๊อกเพิ่ม
-     */
     private function allocateMoreStock($pickingItem, $qtyNeeded, $warehouseUuid)
     {
         $inventoryItem = $this->itemLookupService->findByPartNumber($pickingItem->product_id);
-        if (!$inventoryItem || !$warehouseUuid) return 0;
+        if (!$inventoryItem) return 0;
 
-        // คำนวณแผนการหยิบ (Picking Plan) เพื่อหาว่ามีของที่ Location ไหนบ้าง
         $plan = $this->pickingService->calculatePickingPlan($inventoryItem->uuid, $warehouseUuid, $qtyNeeded);
         $totalReserved = 0;
 
         foreach ($plan as $step) {
-            $stock = $this->stockRepo->findByLocation(
-                $inventoryItem->uuid,
-                $step['location_uuid'],
-                $pickingItem->company_id ?? 1 // ใช้ Company ID จาก Picking Slip
-            );
-
+            $stock = $this->stockRepo->findByLocation($inventoryItem->uuid, $step['location_uuid'], $pickingItem->company_id);
             if ($stock) {
                 $stock->reserveSoft($step['quantity']);
                 $this->stockRepo->save($stock, []);
@@ -179,21 +175,14 @@ class SyncLogisticsDocuments implements ShouldQueue
         return $totalReserved;
     }
 
-    /**
-     * ✅ [FIXED] สร้าง Picking Item ใหม่
-     */
     private function allocateNewItem($pickingSlip, $salesItem, $warehouseUuid)
     {
-        // สร้าง Dummy Object เพื่อส่งให้ฟังก์ชัน allocateMoreStock
-        $tempPickingItem = new PickingSlipItem();
-        $tempPickingItem->product_id = $salesItem->product_id;
-        $tempPickingItem->company_id = $pickingSlip->company_id;
+        // สร้าง Temporary Object เพื่อใช้ส่งข้อมูล
+        $tempItem = new PickingSlipItem();
+        $tempItem->product_id = $salesItem->product_id;
+        $tempItem->company_id = $pickingSlip->company_id;
 
-        $reserved = $this->allocateMoreStock(
-            $tempPickingItem,
-            $salesItem->quantity,
-            $warehouseUuid
-        );
+        $reserved = $this->allocateMoreStock($tempItem, $salesItem->quantity, $warehouseUuid);
 
         if ($reserved > 0) {
             PickingSlipItem::create([
@@ -203,6 +192,8 @@ class SyncLogisticsDocuments implements ShouldQueue
                 'quantity_requested' => $reserved,
                 'quantity_picked' => 0
             ]);
+            return true;
         }
+        return false;
     }
 }
