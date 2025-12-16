@@ -33,6 +33,11 @@ class SalesServiceProvider extends ServiceProvider
             \TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface::class,
             \TmrEcosystem\Sales\Infrastructure\Integration\InventoryProductCatalog::class
         );
+
+        $this->app->bind(
+            \TmrEcosystem\Sales\Application\Contracts\ShippedItemProviderInterface::class,
+            \TmrEcosystem\Logistics\Infrastructure\Services\LogisticsShippedItemService::class
+        );
     }
 
     /**

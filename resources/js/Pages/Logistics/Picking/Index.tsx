@@ -4,7 +4,8 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { debounce } from 'lodash';
 import {
     Search, Box, ArrowRight, Eye, UserPlus, UserCheck,
-    RefreshCw, CheckCircle2, Clock, User, FileText // เพิ่ม FileText
+    RefreshCw, CheckCircle2, Clock, User, FileText, // เพิ่ม FileText
+    XCircleIcon
 } from "lucide-react";
 
 // Components
@@ -139,6 +140,8 @@ export default function PickingIndex({ auth, pickingSlips, filters, stats }: Pro
                 return <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 gap-1"><User className="w-3 h-3"/> Assigned</Badge>;
             case 'done':
                 return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1"><CheckCircle2 className="w-3 h-3"/> Done</Badge>;
+            case 'cancelled':
+                return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><XCircleIcon className="w-3 h-3"/> Cancelled</Badge>;
             default:
                 return <Badge variant="secondary">{slip.status}</Badge>;
         }

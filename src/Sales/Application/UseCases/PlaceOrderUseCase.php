@@ -3,6 +3,7 @@
 namespace TmrEcosystem\Sales\Application\UseCases;
 
 use Exception;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use TmrEcosystem\Sales\Application\DTOs\CreateOrderDto;
 use TmrEcosystem\Sales\Domain\Aggregates\Order;
@@ -14,6 +15,8 @@ use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMe
 use TmrEcosystem\Customers\Infrastructure\Persistence\Models\Customer;
 use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
+use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
+use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
 
 class PlaceOrderUseCase
 {
@@ -101,16 +104,40 @@ class PlaceOrderUseCase
 
             // 9. Auto Log & Events
             CommunicationMessage::create([
-                'user_id' => auth()->id(),
+                'user_id' => Auth::id(),
                 'body' => "Order Created (สร้างใบสั่งขาย) #{$order->getOrderNumber()}",
                 'type' => 'notification',
                 'model_type' => 'sales_order',
                 'model_id' => $order->getId()
             ]);
 
-            // Dispatch Event ถ้า Confirm แล้ว
+            // 10. Dispatch Event ถ้า Confirm แล้ว
             if ($order->getStatus() === OrderStatus::Confirmed) {
-                OrderConfirmed::dispatch($order->getId());
+
+                // [Day 4 Update] สร้าง Snapshot DTO เพื่อส่งไปกับ Event
+                // แปลง OrderItems เป็น DTO
+                $itemsSnapshot = $order->getItems()->map(function ($item) {
+                    return new OrderItemSnapshotDto(
+                        productId: $item->productId,
+                        productName: $item->productName,
+                        quantity: $item->quantity,
+                        unitPrice: $item->unitPrice
+                    );
+                })->toArray();
+
+                // สร้าง Order Snapshot
+                $orderSnapshot = new OrderSnapshotDto(
+                    orderId: $order->getId(),
+                    orderNumber: $order->getOrderNumber(),
+                    customerId: $order->getCustomerId(),
+                    companyId: $order->getCompanyId(),
+                    warehouseId: $order->getWarehouseId(),
+                    items: $itemsSnapshot,
+                    note: $order->getNote()
+                );
+
+                // ส่งข้อมูลครบชุดไปที่ Event (Logistics จะได้ไม่ต้อง Query กลับมา)
+                OrderConfirmed::dispatch($order->getId(), $orderSnapshot);
             }
 
             return $order;

@@ -28,7 +28,8 @@ return new class extends Migration
 
         // 2. ตาราง Order Items (รายการสินค้า)
         Schema::create('sales_order_items', function (Blueprint $table) {
-            $table->id(); // Internal ID
+            $table->uuid('id')->primary(); // Internal ID
+            // [FIX] เปลี่ยนชื่อ Foreign Key เป็น order_id ให้ตรงกับ Model SalesOrderModel
             $table->foreignUuid('order_id')->constrained('sales_orders')->cascadeOnDelete();
 
             $table->string('product_id'); // ID สินค้าจาก Inventory
@@ -39,6 +40,7 @@ return new class extends Migration
             // ----------------------------------
 
             $table->integer('quantity');
+            $table->integer('qty_shipped')->default(0);
             $table->decimal('subtotal', 12, 2); // unit_price * quantity
 
             $table->timestamps();

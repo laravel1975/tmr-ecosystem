@@ -114,7 +114,7 @@ class Order
             productName: $productName,
             unitPrice: $price,     // ระบุชื่อให้ตรงกับ OrderItem
             quantity: $quantity,
-            id: $id ? (int) $id : null, // แปลง string เป็น int
+            id: $id, // แปลง string เป็น int
             qtyShipped: 0
         );
 

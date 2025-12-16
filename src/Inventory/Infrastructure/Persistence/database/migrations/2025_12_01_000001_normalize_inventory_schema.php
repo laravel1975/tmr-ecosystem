@@ -36,7 +36,7 @@ return new class extends Migration
             $table->unique(['company_id', 'name']);
         });
 
-        // 3. เตรียมตาราง Items: เพิ่ม Columns ใหม่ (nullable ไปก่อนเพื่อรอ data migration)
+        // 3. เตรียมตาราง Items: เพิ่ม Columns ใหม่
         Schema::table('inventory_items', function (Blueprint $table) {
             $table->foreignUuid('category_id')->nullable()->after('category')->constrained('inventory_categories');
             $table->foreignUuid('uom_id')->nullable()->after('uom')->constrained('inventory_uoms');
@@ -84,7 +84,7 @@ return new class extends Migration
                         'id' => $uomId,
                         'company_id' => $item->company_id,
                         'name' => trim($item->uom),
-                        'symbol' => strtolower(substr(trim($item->uom), 0, 3)), // Auto generate symbol
+                        'symbol' => strtolower(substr(trim($item->uom), 0, 3)),
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -98,24 +98,22 @@ return new class extends Migration
             }
         }
 
-        // 5. Cleanup: ลบ Columns เก่าและบังคับ Not Null (ถ้าต้องการ)
+        // 5. Cleanup: ลบ Columns เก่า
         Schema::table('inventory_items', function (Blueprint $table) {
+            // [FIX] ต้องลบ Index ก่อนลบ Column เสมอ (โดยเฉพาะ SQLite)
+            // ชื่อ index ปกติจะเป็น table_column_index
+            $table->dropIndex(['category']);
+
             $table->dropColumn(['category', 'uom']);
-            // $table->uuid('category_id')->nullable(false)->change(); // Uncomment ถ้าต้องการบังคับ
-            // $table->uuid('uom_id')->nullable(false)->change(); // Uncomment ถ้าต้องการบังคับ
         });
     }
 
     public function down(): void
     {
-        // ย้อนกลับ: สร้าง column คืน และดึงข้อมูลกลับ (Simplified)
         Schema::table('inventory_items', function (Blueprint $table) {
-            $table->string('category')->nullable();
+            $table->string('category')->nullable()->index(); // Add index back
             $table->string('uom')->nullable();
         });
-
-        // (ในทางปฏิบัติ การ down ข้อมูลที่ normalize แล้วอาจจะทำได้ยากหรือต้องเขียน script สวนทาง)
-        // เพื่อความกระชับ จะทำการ Drop FK และ Tables
 
         Schema::table('inventory_items', function (Blueprint $table) {
             $table->dropForeign(['category_id']);

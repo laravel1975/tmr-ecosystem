@@ -13,6 +13,7 @@ use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
+use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
 
 class OrderFulfillmentService
@@ -22,6 +23,42 @@ class OrderFulfillmentService
         private ItemLookupServiceInterface $itemLookupService,
         private StockPickingService $pickingService
     ) {}
+
+    /**
+     * [Day 5] สร้างเอกสารจาก Snapshot DTO (Decoupled from Sales DB)
+     */
+    public function fulfillOrderFromSnapshot(OrderSnapshotDto $orderSnapshot): void
+    {
+        DB::transaction(function () use ($orderSnapshot) {
+
+            // 1. สร้าง Picking Slip Header จากข้อมูลใน Event
+            $pickingSlip = PickingSlip::create([
+                'order_id' => $orderSnapshot->orderId, // ใช้ ID ที่ส่งมา
+                'order_number' => $orderSnapshot->orderNumber,
+                'customer_id' => $orderSnapshot->customerId, // Logistics อาจจะยังต้องเก็บ Ref นี้ไว้
+                // [FIX] เพิ่ม Company ID (สำคัญมากสำหรับ Multi-tenant)
+                'company_id' => $orderSnapshot->companyId,
+                'warehouse_id' => $orderSnapshot->warehouseId,
+                'picking_number' => 'PK-' . date('Ymd') . '-' . strtoupper(Str::random(6)),
+                'status' => 'pending',
+                'created_at' => now(),
+            ]);
+
+            // 2. สร้าง Picking Slip Items จาก Array ใน DTO
+            foreach ($orderSnapshot->items as $itemDto) {
+                PickingSlipItem::create([
+                    'picking_slip_id' => $pickingSlip->id,
+                    // Map ข้อมูลจาก DTO -> Logistics Schema
+                    'sales_order_item_id' => $itemDto->productId, // หรือใช้ ID ของ Item ถ้ามีใน DTO
+                    'product_name' => $itemDto->productName,
+                    'quantity_requested' => $itemDto->quantity,
+                    'quantity_picked' => 0, // เริ่มต้นยังไม่ได้หยิบ
+                ]);
+            }
+
+            Log::info("Logistics: Created Picking Slip #{$pickingSlip->id} for Order {$orderSnapshot->orderNumber} using Event Snapshot.");
+        });
+    }
 
     /**
      * Main Function: จัดสรรสินค้าและสร้างเอกสาร Logistics
