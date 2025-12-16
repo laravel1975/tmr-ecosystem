@@ -25,7 +25,11 @@ class LogisticsServiceProvider extends ServiceProvider
         $this->bootRoutes();
 
         // 1. Sales -> Logistics Sync
-        Event::listen(OrderConfirmed::class, CreateLogisticsDocuments::class);
+        Event::listen(
+            OrderConfirmed::class,
+            [CreateLogisticsDocuments::class, 'handle']
+        );
+        
         Event::listen(OrderUpdated::class, SyncLogisticsDocuments::class); // นี่คือตัวหลักที่แก้
         Event::listen(OrderCancelled::class, CancelLogisticsDocuments::class);
 
