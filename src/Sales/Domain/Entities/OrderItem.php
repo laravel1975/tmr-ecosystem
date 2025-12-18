@@ -2,7 +2,7 @@
 
 namespace TmrEcosystem\Sales\Domain\Entities;
 
-use TmrEcosystem\Shared\Domain\ValueObjects\Money;
+use Exception;
 
 class OrderItem
 {
@@ -11,9 +11,8 @@ class OrderItem
         public readonly string $productName,
         public readonly float $unitPrice,
         public readonly int $quantity,
-        // [FIX] เปลี่ยนจาก ?int เป็น ?string เพื่อรองรับ UUID
         public readonly ?string $id = null,
-        public readonly int $qtyShipped = 0
+        public int $qtyShipped = 0
     ) {}
 
     public function total(): float
@@ -21,16 +20,51 @@ class OrderItem
         return $this->unitPrice * $this->quantity;
     }
 
-    public static function fromStorage(object $data): self
+    /**
+     * อัปเดตจำนวนที่จัดส่งแล้วสำหรับสินค้ารายการนี้
+     */
+    public function updateShippedQty(int $shippedQty): void
+    {
+        if ($shippedQty < 0) {
+            throw new Exception("Shipped quantity cannot be negative.");
+        }
+
+        if ($shippedQty > $this->quantity) {
+            throw new Exception("Shipped quantity ({$shippedQty}) cannot exceed ordered quantity ({$this->quantity}).");
+        }
+
+        $this->qtyShipped = $shippedQty;
+    }
+
+    /**
+     * ตรวจสอบว่ารายการนี้ส่งครบแล้วหรือยัง
+     */
+    public function isFullyShipped(): bool
+    {
+        return $this->qtyShipped >= $this->quantity;
+    }
+
+    public static function fromStorage(array $data): self
     {
         return new self(
-            productId: $data->product_id,
-            productName: $data->product_name,
-            unitPrice: (float) $data->unit_price,
-            quantity: (int) $data->quantity,
-            // [FIX] ไม่ต้อง Cast เป็น int แล้ว เพราะรับ String ได้
-            id: $data->id,
-            qtyShipped: (int) ($data->qty_shipped ?? 0)
+            productId: $data['product_id'],
+            productName: $data['product_name'],
+            unitPrice: (float) $data['unit_price'],
+            quantity: (int) $data['quantity'],
+            id: $data['id'] ?? null,
+            qtyShipped: (int) ($data['qty_shipped'] ?? 0)
         );
+    }
+
+    public function toStorage(): array
+    {
+        return [
+            'id' => $this->id,
+            'product_id' => $this->productId,
+            'product_name' => $this->productName,
+            'unit_price' => $this->unitPrice,
+            'quantity' => $this->quantity,
+            'qty_shipped' => $this->qtyShipped,
+        ];
     }
 }

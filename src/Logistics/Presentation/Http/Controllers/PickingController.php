@@ -3,6 +3,7 @@
 namespace TmrEcosystem\Logistics\Presentation\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -12,6 +13,7 @@ use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderItemModel;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
+use TmrEcosystem\Logistics\Application\UseCases\GeneratePickingSuggestionsUseCase;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
 
@@ -164,6 +166,22 @@ class PickingController extends Controller
             ],
             'items' => $items
         ]);
+    }
+
+    /**
+     * Action: สร้างรายการแนะนำการหยิบสินค้า (Allocated Picking List)
+     * URL: POST /logistics/picking/{id}/generate-plan
+     */
+    public function generatePlan(Request $request, string $id, GeneratePickingSuggestionsUseCase $useCase)
+    {
+        try {
+            // ✅ ต้องเรียก method 'handle' ซึ่งเป็น Entry Point มาตรฐานของ Use Case
+            $useCase->handle($id);
+
+            return back()->with('success', 'Picking plan generated successfully. Items allocated to locations.');
+        } catch (Exception $e) {
+            return back()->with('error', 'Failed to generate plan: ' . $e->getMessage());
+        }
     }
 
     public function confirm(Request $request, string $id)

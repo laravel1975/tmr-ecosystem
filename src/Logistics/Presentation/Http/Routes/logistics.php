@@ -17,6 +17,8 @@ use TmrEcosystem\Logistics\Presentation\Http\Controllers\ShipmentPdfController;
 |--------------------------------------------------------------------------
 */
 
+Route::post('/picking/{id}/generate-plan', [PickingController::class, 'generatePlan'])->name('picking.generate-plan');
+
 // --- Picking Routes ---
 Route::get('/picking', [PickingController::class, 'index'])->name('picking.index');
 Route::get('/picking/{id}/process', [PickingController::class, 'show'])->name('picking.process');

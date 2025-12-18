@@ -13,16 +13,17 @@ use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
 use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMessage;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
-// ✅ Import เพิ่มเติม
 use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
-use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
+// ✅ Import Interface แทน Model
+use TmrEcosystem\Sales\Application\Contracts\LogisticsStatusCheckerInterface;
 
 class UpdateOrderUseCase
 {
     public function __construct(
         private OrderRepositoryInterface $orderRepository,
         private ProductCatalogInterface $productCatalog,
-        private CreditCheckService $creditCheckService // ✅ Inject Service
+        private CreditCheckService $creditCheckService,
+        private LogisticsStatusCheckerInterface $logisticsStatusChecker // ✅ Inject Interface
     ) {}
 
     public function handle(string $orderId, UpdateOrderDto $dto): Order
@@ -36,27 +37,18 @@ class UpdateOrderUseCase
             throw new Exception("Cannot update finalized orders.");
         }
 
-        // ------------------------------------------------------------------
-        // ✅ [GUARD 1] Logistics Status Check
-        // แก้ไข: ใช้ $order->getId() แทน $order->id
-        // ------------------------------------------------------------------
-        $pickingSlip = PickingSlip::where('order_id', $order->getId())->first();
-
-        if ($pickingSlip && in_array($pickingSlip->status, ['in_progress', 'done', 'packed', 'shipped'])) {
+        // ✅ ใช้ Interface ตรวจสอบสถานะ Logistics (Clean Architecture)
+        if ($this->logisticsStatusChecker->isPickingStarted($order->getId())) {
             throw new Exception("Cannot update order: Picking process has already started. Please contact warehouse.");
         }
 
-        // เก็บยอดเดิมไว้เช็ค (ใช้ Getter)
         $oldTotal = $order->getTotalAmount();
         $wasConfirmed = $order->getStatus() === OrderStatus::Confirmed;
 
         $productIds = array_map(fn($item) => $item->productId, $dto->items);
         $products = $this->productCatalog->getProductsByIds($productIds);
 
-        // ------------------------------------------------------------------
-        // ✅ [GUARD 2] Financial Control Check
-        // คำนวณยอดใหม่ล่วงหน้าเพื่อเช็ควงเงิน
-        // ------------------------------------------------------------------
+        // Financial Control Check
         $newGrandTotal = 0;
         foreach ($dto->items as $itemDto) {
              if ($itemDto->quantity <= 0) continue;
@@ -66,19 +58,20 @@ class UpdateOrderUseCase
              }
         }
 
-        // ถ้ายอดใหม่ > ยอดเดิม ให้เช็คเครดิต (ใช้ getCustomerId())
         if (($wasConfirmed || $dto->confirmOrder) && $newGrandTotal > $oldTotal) {
             $increaseAmount = $newGrandTotal - $oldTotal;
-            // เมธอดนี้จะ Throw Exception ถ้าวงเงินไม่พอ
             $this->creditCheckService->canPlaceOrder($order->getCustomerId(), $increaseAmount);
         }
 
         return DB::transaction(function () use ($order, $dto, $products, $oldTotal, $orderId, $wasConfirmed) {
 
-            // อัปเดตข้อมูล Header
             $order->updateDetails($dto->customerId, $dto->note, $dto->paymentTerms);
 
-            // เคลียร์รายการเดิมและเพิ่มใหม่ (Aggregate Pattern)
+            // Preserve State Logic (จากรอบที่แล้ว)
+            $existingItemsMap = $order->getItems()
+                ->mapWithKeys(fn($item) => [$item->id => $item->qtyShipped])
+                ->toArray();
+
             $order->clearItems();
 
             foreach ($dto->items as $itemDto) {
@@ -87,28 +80,30 @@ class UpdateOrderUseCase
                 $product = $products[$itemDto->productId] ?? null;
                 if (!$product) continue;
 
+                $preservedQtyShipped = 0;
+                if ($itemDto->id && isset($existingItemsMap[$itemDto->id])) {
+                    $preservedQtyShipped = $existingItemsMap[$itemDto->id];
+                }
+
                 $order->addItem(
                     productId: $product->id,
                     productName: $product->name,
                     price: $product->price,
                     quantity: $itemDto->quantity,
-                    id: $itemDto->id
+                    id: $itemDto->id,
+                    qtyShipped: $preservedQtyShipped
                 );
             }
 
-            // Logic Confirm เดิม
             $isJustConfirmed = false;
             if ($dto->confirmOrder && $order->getStatus() === OrderStatus::Draft) {
                 $order->confirm();
                 $isJustConfirmed = true;
             }
 
-            // บันทึกผ่าน Repository (จะจัดการเรื่อง Persistence ให้เอง)
             $this->orderRepository->save($order);
 
-            // Logic Log ราคา (ใช้ Getter)
             $newTotal = $order->getTotalAmount();
-
             if ($order->getStatus() === OrderStatus::Confirmed && abs($oldTotal - $newTotal) > 0.01) {
                 $diff = $newTotal - $oldTotal;
                 $sign = $diff > 0 ? '+' : '';
@@ -126,13 +121,10 @@ class UpdateOrderUseCase
                 ]);
             }
 
-            // --- Event Dispatching ---
-
             if ($isJustConfirmed) {
                 OrderConfirmed::dispatch($orderId);
             }
             elseif ($wasConfirmed) {
-                // ส่ง Event เพื่อให้ Logistics Sync ทำงาน
                 OrderUpdated::dispatch($order);
             }
 

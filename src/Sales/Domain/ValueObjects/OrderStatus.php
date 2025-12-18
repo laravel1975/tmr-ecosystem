@@ -7,21 +7,19 @@ enum OrderStatus: string
     case Draft = 'draft';
     case PendingReservation = 'pending_reservation';
     case Confirmed = 'confirmed';
-    // ✅ [เพิ่ม] สถานะสำหรับการส่งของบางส่วน
-    case PartiallyShipped = 'partially_shipped';
-    case Cancelled = 'cancelled';
+    case PartiallyShipped = 'partially_shipped'; // ✅ เพิ่มสถานะนี้
     case Completed = 'completed';
+    case Cancelled = 'cancelled';
 
     public function label(): string
     {
         return match($this) {
             self::Draft => 'Draft',
-            self::PendingReservation => 'Waiting for Stock',
+            self::PendingReservation => 'Pending Reservation',
             self::Confirmed => 'Confirmed',
-            // ✅ [เพิ่ม] Label สำหรับแสดงผล
             self::PartiallyShipped => 'Partially Shipped',
-            self::Cancelled => 'Cancelled',
             self::Completed => 'Completed',
+            self::Cancelled => 'Cancelled',
         };
     }
 }

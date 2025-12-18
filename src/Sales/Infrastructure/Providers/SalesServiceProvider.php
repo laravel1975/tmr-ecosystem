@@ -6,7 +6,17 @@ use Illuminate\Support\Facades\Event; // ✅ Import Event Facade
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
 use TmrEcosystem\Logistics\Domain\Events\DeliveryNoteCancelled;
+use TmrEcosystem\Logistics\Infrastructure\Services\LogisticsShippedItemService;
+use TmrEcosystem\Sales\Application\Contracts\LogisticsStatusCheckerInterface;
+use TmrEcosystem\Sales\Application\Contracts\ShippedItemProviderInterface;
+use TmrEcosystem\Sales\Application\Contracts\StockReservationInterface;
 use TmrEcosystem\Sales\Application\Listeners\CancelOrderOnDeliveryFailure;
+use TmrEcosystem\Sales\Domain\Repositories\OrderRepositoryInterface;
+use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
+use TmrEcosystem\Sales\Infrastructure\Integration\InventoryProductCatalog;
+use TmrEcosystem\Sales\Infrastructure\Integration\LogisticsStatusService;
+use TmrEcosystem\Sales\Infrastructure\Integration\StockReservationService;
+use TmrEcosystem\Sales\Infrastructure\Persistence\EloquentOrderRepository;
 
 /**
  * --- 1. Import Domain Repository Interfaces ---
@@ -23,20 +33,18 @@ class SalesServiceProvider extends ServiceProvider
     public function register(): void
     {
         // Bind Repository
-        $this->app->bind(
-            \TmrEcosystem\Sales\Domain\Repositories\OrderRepositoryInterface::class,
-            \TmrEcosystem\Sales\Infrastructure\Persistence\EloquentOrderRepository::class
-        );
+        $this->app->bind(OrderRepositoryInterface::class, EloquentOrderRepository::class);
 
         // Bind Product Service (Integration)
-        $this->app->bind(
-            \TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface::class,
-            \TmrEcosystem\Sales\Infrastructure\Integration\InventoryProductCatalog::class
-        );
+        $this->app->bind(ProductCatalogInterface::class, InventoryProductCatalog::class);
 
+        $this->app->bind(ShippedItemProviderInterface::class, LogisticsShippedItemService::class);
+        $this->app->bind(LogisticsStatusCheckerInterface::class, LogisticsStatusService::class);
+
+        // ✅ Register Reservation Binding
         $this->app->bind(
-            \TmrEcosystem\Sales\Application\Contracts\ShippedItemProviderInterface::class,
-            \TmrEcosystem\Logistics\Infrastructure\Services\LogisticsShippedItemService::class
+            StockReservationInterface::class,
+            StockReservationService::class
         );
     }
 

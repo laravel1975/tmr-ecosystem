@@ -2,106 +2,76 @@
 
 namespace TmrEcosystem\Stock\Application\Services;
 
+use TmrEcosystem\Stock\Application\Contracts\StockPickingServiceInterface;
 use TmrEcosystem\Stock\Domain\Repositories\StockLevelRepositoryInterface;
-use Illuminate\Support\Facades\DB;
+// ใช้ Model ของ Warehouse เพื่อดึงรหัส Location (ถ้าแยก Module เคร่งครัดอาจต้องใช้ Repository ของ Warehouse)
+use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\StorageLocationModel;
 
-class StockPickingService
+class StockPickingService implements StockPickingServiceInterface
 {
     public function __construct(
-        protected StockLevelRepositoryInterface $stockRepository
+        private StockLevelRepositoryInterface $stockLevelRepository
     ) {}
 
-    /**
-     * (Backward Compatibility) ให้ Controller เก่าเรียกใช้ได้โดยไม่ต้องแก้โค้ดเยอะ
-     */
-    public function suggestPickingLocations(string $itemUuid, string $warehouseUuid, float $qtyNeeded): array
+    public function planPicking(string $warehouseId, array $items): array
     {
-        return $this->calculatePickingPlan($itemUuid, $warehouseUuid, $qtyNeeded);
-    }
+        $pickingPlan = [];
 
-    /**
-     * ✅ [Picking Phase] คำนวณแผนการหยิบสินค้า (Picking Plan)
-     * Logic: หาจาก "Available Stock" (On Hand - Reserved) เพื่อไม่ให้หยิบซ้อนกับออเดอร์อื่น
-     * ใช้สำหรับ: แสดงใน Picking Slip / หน้าจอ Picking Process
-     */
-    public function calculatePickingPlan(string $itemUuid, string $warehouseUuid, float $qtyNeeded): array
-    {
-        // 1. ดึงสต็อกทั้งหมดที่มี เรียงตาม Priority (Picking > Bulk)
-        $stocks = $this->stockRepository->findPickableStocks($itemUuid, $warehouseUuid);
+        foreach ($items as $item) {
+            $itemId = $item['product_id'];
+            $qtyNeeded = (float) $item['quantity'];
 
-        $plan = [];
-        $remainingNeeded = $qtyNeeded;
+            if ($qtyNeeded <= 0) continue;
 
-        foreach ($stocks as $stock) {
-            if ($remainingNeeded <= 0) break;
+            // 1. ดึงข้อมูล Stock ที่หยิบได้ (เรียงตาม Priority: Picking Zone -> General)
+            // Repository ต้องมี method findPickableStocks ตามที่ทำไว้ก่อนหน้า
+            $availableStocks = $this->stockLevelRepository->findPickableStocks($itemId, $warehouseId);
 
-            // Picking ต้องดูยอด Available เท่านั้น
-            $available = $stock->getAvailableQuantity();
+            $qtyRemaining = $qtyNeeded;
 
-            if ($available <= 0) continue;
+            foreach ($availableStocks as $stock) {
+                if ($qtyRemaining <= 0) break;
 
-            // จะหยิบเท่าไหร่?
-            $qtyToPick = min($available, $remainingNeeded);
+                // คำนวณยอดที่หยิบได้จากกองนี้ (Available = OnHand - Reserved)
+                // หรือถ้าจะหยิบจาก OnHand เลย (เพราะถือว่าจองแล้ว) ให้ใช้ getQuantityOnHand()
+                $qtyInLocation = $stock->getQuantityOnHand();
 
-            // ดึง Location Code
-            $locationCode = DB::table('warehouse_storage_locations')
-                ->where('uuid', $stock->locationUuid())
-                ->value('code');
+                if ($qtyInLocation <= 0) continue;
 
-            $plan[] = [
-                'location_uuid' => $stock->locationUuid(),
-                'location_code' => $locationCode,
-                'quantity' => $qtyToPick
-            ];
+                $take = min($qtyInLocation, $qtyRemaining);
 
-            $remainingNeeded -= $qtyToPick;
+                // 2. ดึง Location Code เพื่อแสดงผล
+                $locationCode = 'UNKNOWN';
+                $locationUuid = $stock->getLocationUuid();
+
+                if ($locationUuid) {
+                    $location = StorageLocationModel::find($locationUuid);
+                    if ($location) {
+                        $locationCode = $location->code;
+                    }
+                }
+
+                $pickingPlan[] = [
+                    'product_id' => $itemId,
+                    'location_uuid' => $locationUuid,
+                    'location_code' => $locationCode,
+                    'quantity' => $take
+                ];
+
+                $qtyRemaining -= $take;
+            }
+
+            // กรณีของไม่พอ (Backorder / Not Found)
+            if ($qtyRemaining > 0) {
+                $pickingPlan[] = [
+                    'product_id' => $itemId,
+                    'location_uuid' => null,
+                    'location_code' => 'N/A (Not Found)',
+                    'quantity' => $qtyRemaining
+                ];
+            }
         }
 
-        // ถ้าของไม่พอ (Backorder)
-        if ($remainingNeeded > 0) {
-            $plan[] = [
-                'location_uuid' => null,
-                'location_code' => 'NOT_ENOUGH_STOCK',
-                'quantity' => $remainingNeeded
-            ];
-        }
-
-        return $plan;
-    }
-
-    /**
-     * ✅ [Shipment Phase] คำนวณจุดตัดสต็อก (Deduction Plan)
-     * Logic: เน้นหาจุดที่มี "Reserved" เยอะๆ ก่อน แล้วค่อยดู "On Hand"
-     * ใช้สำหรับ: ตัดสต็อกจริงเมื่อกด Shipped (Shipment/Delivery Controller)
-     */
-    public function calculateShipmentDeductionPlan(string $itemUuid, string $warehouseUuid, float $qtyNeeded): array
-    {
-        // 1. ดึงสต็อกทั้งหมดที่มี OnHand
-        $stocks = $this->stockRepository->findPickableStocks($itemUuid, $warehouseUuid);
-
-        // 2. เรียงลำดับใหม่: เอาที่มียอด Reserved เยอะสุดขึ้นก่อน (เพราะนั่นคือที่ที่เราจองไว้ตอน Picking)
-        $stocks = $stocks->sortByDesc(fn($s) => $s->getQuantityReserved());
-
-        $plan = [];
-        $remaining = $qtyNeeded;
-
-        foreach ($stocks as $stock) {
-            if ($remaining <= 0) break;
-
-            $onHand = $stock->getQuantityOnHand(); // Shipment ต้องดูของที่มีอยู่จริง (On Hand)
-            if ($onHand <= 0) continue;
-
-            // ตัดเท่าที่มี หรือ เท่าที่ต้องการ
-            $deduct = min($onHand, $remaining);
-
-            $plan[] = [
-                'location_uuid' => $stock->locationUuid(),
-                'quantity' => $deduct
-            ];
-
-            $remaining -= $deduct;
-        }
-
-        return $plan;
+        return $pickingPlan;
     }
 }

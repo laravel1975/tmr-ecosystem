@@ -11,6 +11,7 @@ use TmrEcosystem\Stock\Infrastructure\Persistence\Eloquent\Repositories\Eloquent
 
 // Event
 use TmrEcosystem\Stock\Application\Contracts\StockCheckServiceInterface;
+use TmrEcosystem\Stock\Application\Contracts\StockPickingServiceInterface;
 use TmrEcosystem\Stock\Application\Listeners\ReleaseStockOnOrderCancelled;
 // Listener
 use TmrEcosystem\Stock\Application\Services\StockCheckService;
@@ -32,6 +33,12 @@ class StockServiceProvider extends ServiceProvider
         $this->app->bind(
             StockCheckServiceInterface::class,
             StockCheckService::class
+        );
+
+        // ✅ Register Picking Service
+        $this->app->bind(
+            StockPickingServiceInterface::class,
+            StockPickingService::class
         );
 
         // ✅ Bind Service นี้ให้เรียกใช้ได้ (หรือเรียกใช้ direct class ก็ได้เพราะเป็น Concrete class)

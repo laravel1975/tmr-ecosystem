@@ -257,6 +257,8 @@ class OrderController extends Controller
 
             // ✅ 5. ประยุกต์ใช้ Logic Manual Confirm ที่คุณต้องการ
             if ($request->input('action') === 'confirm') {
+
+                dd("Test Confirm");
                 // อัปเดตสถานะใน Database โดยตรง
                 SalesOrderModel::where('id', $order->getId())->update(['status' => 'confirmed']);
 
@@ -514,6 +516,8 @@ class OrderController extends Controller
         try {
             $dto = UpdateOrderDto::fromRequest($request);
             $useCase->handle($id, $dto);
+
+            dd($request->get('all'));
 
             if ($request->input('action') === 'confirm') {
                 $currentStatus = SalesOrderModel::where('id', $id)->value('status');
