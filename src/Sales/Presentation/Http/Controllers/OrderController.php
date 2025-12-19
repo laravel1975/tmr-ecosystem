@@ -19,6 +19,7 @@ use TmrEcosystem\Sales\Application\UseCases\CancelOrderUseCase;
 // Domain & Repositories
 use TmrEcosystem\Sales\Domain\Repositories\OrderRepositoryInterface;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
+use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
 
 // Persistence Models
 use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
@@ -271,7 +272,6 @@ class OrderController extends Controller
 
             return to_route('sales.orders.show', $order->getId())
                 ->with('success', 'Order created successfully!');
-
         } catch (Exception $e) {
             Log::error("Create Order Failed: " . $e->getMessage());
 
@@ -288,8 +288,12 @@ class OrderController extends Controller
     // ✅ [Update] ปรับปรุงเมธอด show เพื่อคำนวณสถานะการจัดส่ง + Timeline + Salesperson
     public function show(string $id, OrderRepositoryInterface $repo)
     {
-        // 1. Fetch Order via Repository (Domain Aggregate)
-        $order = $repo->findById($id);
+        // 1. ดึงข้อมูลผ่าน Repository (ซึ่งจะเรียก reconstitute ให้)
+        $order = $this->orderRepository->findById($id);
+
+        if (!$order) {
+            abort(404, 'Order not found');
+        }
 
         // 2. Fetch Order Model via Eloquent (for relationships & quick reads)
         $orderModel = SalesOrderModel::withCount('pickingSlips')
@@ -503,8 +507,7 @@ class OrderController extends Controller
     public function update(
         Request $request,
         string $id,
-        UpdateOrderUseCase $useCase,
-        OrderRepositoryInterface $repo
+        UpdateOrderUseCase $useCase
     ) {
         $request->validate([
             'customer_id' => 'required',
@@ -514,32 +517,28 @@ class OrderController extends Controller
         ]);
 
         try {
+            // Transform Request to DTO
             $dto = UpdateOrderDto::fromRequest($request);
-            $useCase->handle($id, $dto);
 
-            dd($request->get('all'));
+            // Execute Use Case
+            $order = $useCase->handle($id, $dto);
 
-            if ($request->input('action') === 'confirm') {
-                $currentStatus = SalesOrderModel::where('id', $id)->value('status');
+            // dd($order);
 
-                if ($currentStatus !== 'confirmed') {
-                    SalesOrderModel::where('id', $id)->update(['status' => 'confirmed']);
-                    $order = $repo->findById($id);
-                    OrderConfirmed::dispatch($order);
-
-                    return to_route('sales.orders.show', $id)
-                        ->with('success', 'Order confirmed & Stock reserved successfully!');
-                } else {
-                    return to_route('sales.orders.show', $id)
-                        ->with('success', 'Order updated successfully!');
-                }
+            // Determine Response Message
+            // ✅ ตอนนี้เรียกใช้ OrderStatus::Confirmed ได้แล้วเพราะ import มาแล้ว
+            if ($order->getStatus() === OrderStatus::Confirmed) {
+                $message = 'ยืนยันออเดอร์และจองสินค้าเรียบร้อยแล้ว (Order Confirmed & Stock Reserved)';
+            } else {
+                $message = 'บันทึกข้อมูลเรียบร้อยแล้ว (Order Updated)';
             }
 
-            return to_route('sales.orders.show', $id)
-                ->with('success', 'Order updated successfully!');
+            return to_route('sales.orders.edit', $id)
+                ->with('success', $message);
+
         } catch (Exception $e) {
-            Log::warning("Order Update/Confirm Failed: " . $e->getMessage());
-            return back()->with('error', 'Operation Failed: ' . $e->getMessage());
+            Log::error("Order Update Failed: " . $e->getMessage());
+            return back()->with('error', 'เกิดข้อผิดพลาด: ' . $e->getMessage());
         }
     }
 

@@ -92,10 +92,10 @@ export default function EditOrder({ auth, customers, availableProducts, order, p
         };
     });
 
-    const { data, setData, put, post, processing, errors } = useForm({
+    // ✅ แก้ไขเป็น (เพิ่ม transform):
+    const { data, setData, put, post, processing, errors, transform } = useForm({
         customer_id: order.customer_id,
         salesperson_id: order.salesperson_id?.toString() || '',
-        // Note: ในหน้า Edit วันที่อาจจะมาจาก order.created_at หรือ field วันที่ใบเสนอราคาถ้ามี
         order_date: new Date().toISOString().split('T')[0],
         payment_terms: order.payment_terms || '',
         items: initialItems,
@@ -194,14 +194,19 @@ export default function EditOrder({ auth, customers, availableProducts, order, p
     // ✅ Handle Update
     const handleSubmit = (actionType: 'save' | 'confirm') => {
         setIsSubmitting(true);
-        const payload = { ...data, action: actionType };
-        const options = {
+
+        // 1. ใช้ transform เพื่อยัดไส้ action เข้าไปใน data ก่อนส่ง
+        transform((data: any) => ({
+            ...data,
+            action: actionType, // ค่านี้จะถูกส่งไป Backend
+        }));
+
+        // 2. สั่ง put โดยไม่ต้องส่ง payload เอง (เพราะ transform จัดการให้แล้ว)
+        put(route('sales.orders.update', order.id), {
             onSuccess: () => setIsSubmitting(false),
             onError: () => setIsSubmitting(false),
             preserveScroll: true
-        };
-        // Always PUT for Edit page
-        put(route('sales.orders.update', order.id), payload, options);
+        });
     };
 
     const handleCancelOrder = () => {
@@ -490,7 +495,14 @@ export default function EditOrder({ auth, customers, availableProducts, order, p
                                                             </TableCell>
 
                                                             <TableCell className="p-2"><Input disabled={isCancelledItem || isItemShipped || isReadOnly} type="number" value={item.unit_price} onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value))} className={cn("border-0 shadow-none h-9 text-right", !isCancelledItem && "bg-yellow-50/50")} /></TableCell>
-                                                            <TableCell className="text-right font-medium p-2 align-middle"><span className={isCancelledItem ? "line-through text-gray-400" : "text-gray-700"}>{item.total.toLocaleString()} ฿</span>{isCancelledItem && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}</TableCell>
+
+                                                            <TableCell className="text-right font-medium p-2 align-middle">
+                                                                <span className={isCancelledItem ? "line-through text-gray-400" : "text-gray-700"}>
+                                                                    {(item.total || 0).toLocaleString()} ฿  {/* ✅ ใส่ (item.total || 0) เพื่อกันไว้ */}
+                                                                </span>
+                                                                {isCancelledItem && <span className="ml-2 text-xs text-red-500 font-bold">(CANCELLED)</span>}
+                                                            </TableCell>
+
                                                             <TableCell className="p-2 text-center">
                                                                 {isCancelledItem ? (
                                                                     <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50" onClick={() => restoreItem(index)} disabled={isReadOnly}><RotateCcw className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent><p>Restore</p></TooltipContent></Tooltip></TooltipProvider>

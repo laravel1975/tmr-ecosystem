@@ -10,10 +10,10 @@ use Exception;
 
 class Order
 {
-    // Properties (คงเดิม)
+    // Properties
     private string $id;
     private string $orderNumber;
-    private string $customerId;
+    private string $customerId; // ✅ Property เจ้าปัญหา
     private ?string $salespersonId;
     private string $companyId;
     private string $warehouseId;
@@ -23,9 +23,33 @@ class Order
     private string $note = '';
     private string $paymentTerms = 'immediate';
 
-    // ... (Constructor และ Getters คงเดิม) ...
+    // ✅ Constructor: ต้องกำหนดค่า customerId ทันที
+    public function __construct(
+        string $customerId,
+        string $companyId = 'DEFAULT_COMPANY',
+        string $warehouseId = 'DEFAULT_WAREHOUSE',
+        ?string $salespersonId = null
+    ) {
+        $this->id = (string) Str::uuid();
+        $this->customerId = $customerId; // ✅ ห้ามลืมบรรทัดนี้
+        $this->companyId = $companyId;
+        $this->warehouseId = $warehouseId;
+        $this->salespersonId = $salespersonId;
+
+        $this->status = OrderStatus::Draft;
+        $this->items = collect([]);
+        $this->totalAmount = 0;
+        $this->orderNumber = 'DRAFT';
+    }
+
+    // --- Getters ---
     public function getId(): string { return $this->id; }
-    public function getCustomerId(): string { return $this->customerId; }
+
+    public function getCustomerId(): string
+    {
+        return $this->customerId;
+    }
+
     public function getCompanyId(): string { return $this->companyId; }
     public function getWarehouseId(): string { return $this->warehouseId; }
     public function getSalespersonId(): ?string { return $this->salespersonId; }
@@ -36,18 +60,25 @@ class Order
     public function getNote(): string { return $this->note; }
     public function getPaymentTerms(): string { return $this->paymentTerms; }
 
-    // --- Existing Methods (addItem, clearItems, etc.) ---
-
+    // --- Domain Methods (คงเดิม) ---
     public function addItem(string $productId, string $productName, float $price, int $quantity, ?string $id = null, int $qtyShipped = 0): void
     {
-        // (Logic ตามที่แก้ไปรอบก่อนหน้า)
         if (in_array($this->status, [OrderStatus::Cancelled, OrderStatus::Completed])) {
             throw new Exception("Cannot modify finalized order.");
         }
         if ($quantity < $qtyShipped) {
             throw new Exception("Cannot set quantity lower than shipped quantity.");
         }
-        $item = new OrderItem($productId, $productName, $price, $quantity, $id, $qtyShipped);
+
+        $item = new OrderItem(
+            productId: $productId,
+            productName: $productName,
+            unitPrice: $price,
+            quantity: $quantity,
+            id: $id,
+            qtyShipped: $qtyShipped
+        );
+
         $this->items->push($item);
         $this->recalculateTotal();
     }
@@ -63,9 +94,6 @@ class Order
 
     public function updateDetails(string $customerId, ?string $note, ?string $paymentTerms): void
     {
-        if (in_array($this->status, [OrderStatus::Cancelled, OrderStatus::Completed])) {
-            throw new Exception("Cannot update details of finalized order.");
-        }
         $this->customerId = $customerId;
         $this->note = $note ?? '';
         $this->paymentTerms = $paymentTerms ?? 'immediate';
@@ -73,64 +101,51 @@ class Order
 
     public function confirm(): void
     {
-        if ($this->status !== OrderStatus::Draft) {
-            throw new Exception("Order is already confirmed or cancelled.");
-        }
-        if ($this->items->isEmpty()) {
-            throw new Exception("Cannot confirm an empty order.");
-        }
+        if ($this->status !== OrderStatus::Draft) throw new Exception("Order already confirmed/cancelled.");
+        if ($this->items->isEmpty()) throw new Exception("Cannot confirm empty order.");
         $this->status = OrderStatus::Confirmed;
     }
 
-    // ✅ [เพิ่มใหม่] Method สำหรับรับข้อมูลการจัดส่งจาก Logistics
-    public function updateItemShipmentStatus(string $itemId, int $totalQtyShipped): void
+    public function cancel(): void
     {
-        if ($this->status === OrderStatus::Cancelled) {
-            throw new Exception("Cannot update shipment for a cancelled order.");
-        }
-
-        // 1. ค้นหา Item
-        $item = $this->items->first(fn(OrderItem $i) => $i->id === $itemId);
-        if (!$item) {
-            // อาจจะ Log warning หรือ ignore ถ้าหาไม่เจอ (กรณี Data inconsistency)
-            return;
-        }
-
-        // 2. อัปเดตข้อมูลใน Entity
-        $item->updateShippedQty($totalQtyShipped);
-
-        // 3. ประเมินสถานะ Order ทั้งใบใหม่ (State Transition)
-        $this->reassessStatus();
+        if ($this->status === OrderStatus::Completed) throw new Exception("Cannot cancel completed order.");
+        $this->status = OrderStatus::Cancelled;
     }
 
-    // ✅ [เพิ่มใหม่] Logic การเปลี่ยนสถานะ (State Machine)
+    public function updateItemShipmentStatus(string $itemId, int $totalQtyShipped): void
+    {
+        $item = $this->items->first(fn($i) => $i->id === $itemId);
+        if ($item) {
+            $item->updateShippedQty($totalQtyShipped);
+            $this->reassessStatus();
+        }
+    }
+
     private function reassessStatus(): void
     {
         if ($this->items->isEmpty()) return;
-
-        $allFullyShipped = $this->items->every(fn(OrderItem $item) => $item->isFullyShipped());
-        $someShipped = $this->items->contains(fn(OrderItem $item) => $item->qtyShipped > 0);
+        $allFullyShipped = $this->items->every(fn($item) => $item->isFullyShipped());
+        $someShipped = $this->items->contains(fn($item) => $item->qtyShipped > 0);
 
         if ($allFullyShipped) {
             $this->status = OrderStatus::Completed;
         } elseif ($someShipped) {
             $this->status = OrderStatus::PartiallyShipped;
         } else {
-            // ถ้ายังไม่ส่งเลย ให้กลับไปเป็น Confirmed (เผื่อกรณียกเลิกใบส่งของ)
             $this->status = OrderStatus::Confirmed;
         }
     }
 
     private function recalculateTotal(): void
     {
-        $this->totalAmount = $this->items->sum(fn(OrderItem $item) => $item->total());
+        $this->totalAmount = $this->items->sum(fn($item) => $item->total());
     }
 
-    // Reconstitute method... (คงเดิม)
+    // ✅ Reconstitute: สร้าง Object จาก DB โดยเรียก Constructor ให้ถูกต้อง
     public static function reconstitute(
         string $id,
         string $orderNumber,
-        string $customerId,
+        string $customerId, // รับค่าเข้ามา
         string $companyId,
         string $warehouseId,
         ?string $salespersonId,
@@ -140,14 +155,20 @@ class Order
         string $note = '',
         string $paymentTerms = 'immediate'
     ): self {
+        // 1. เรียก Constructor เพื่อ Initialize Properties หลัก (รวมถึง customerId)
         $instance = new self($customerId, $companyId, $warehouseId, $salespersonId);
+
+        // 2. เติมข้อมูลส่วนที่เหลือ
         $instance->id = $id;
         $instance->orderNumber = $orderNumber;
         $instance->status = OrderStatus::from($statusString);
         $instance->totalAmount = $totalAmount;
         $instance->note = $note;
         $instance->paymentTerms = $paymentTerms;
+
+        // 3. Map Items (Array -> Entities)
         $instance->items = collect($itemsData)->map(fn($item) => OrderItem::fromStorage($item));
+
         return $instance;
     }
 }

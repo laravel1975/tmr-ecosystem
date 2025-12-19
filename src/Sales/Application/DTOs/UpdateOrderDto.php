@@ -4,53 +4,32 @@ namespace TmrEcosystem\Sales\Application\DTOs;
 
 use Illuminate\Http\Request;
 
-readonly class UpdateOrderItemDto
+class UpdateOrderDto
 {
     public function __construct(
-        public ?string $id, // ✅ เพิ่ม id (Nullable เพราะสินค้าใหม่อาจไม่มี id)
-        public string $productId,
-        public int $quantity
-    ) {}
-}
-
-readonly class UpdateOrderDto
-{
-    public function __construct(
-        public string $customerId,
-        public array $items, // Array of UpdateOrderItemDto
-        public ?string $note = null,
-        public ?string $paymentTerms = null,
-        public bool $confirmOrder = false
+        public readonly string $customerId,
+        public readonly array $items,
+        public readonly ?string $note,
+        public readonly ?string $paymentTerms,
+        public readonly bool $confirmOrder = false // ✅ เพิ่มตัวแปรนี้
     ) {}
 
     public static function fromRequest(Request $request): self
     {
-        $data = $request->validate([
-            'customer_id' => 'required',
-            'items' => 'required|array|min:1',
-            'items.*.id' => 'nullable', // ✅ อนุญาตให้ส่ง id มา
-            'items.*.product_id' => 'required',
-            'items.*.quantity' => 'required|integer|min:0', // 0 = remove
-            'note' => 'nullable|string',
-            'payment_terms' => 'nullable|string',
-            'action' => 'nullable|string',
-        ]);
-
-        $items = array_map(
-            fn($item) => new UpdateOrderItemDto(
-                $item['id'] ?? null, // ✅ Map id
-                $item['product_id'],
-                (int)$item['quantity']
-            ),
-            $data['items']
-        );
+        // แปลงรายการสินค้า
+        $items = array_map(fn($item) => new CreateOrderItemDto(
+            productId: $item['product_id'],
+            quantity: (int) $item['quantity'],
+            id: $item['id'] ?? null // รองรับกรณีแก้ไขรายการเดิม
+        ), $request->input('items', []));
 
         return new self(
-            customerId: $data['customer_id'],
+            customerId: $request->input('customer_id'),
             items: $items,
-            note: $data['note'] ?? null,
-            paymentTerms: $data['payment_terms'] ?? null,
-            confirmOrder: ($data['action'] ?? '') === 'confirm'
+            note: $request->input('note'),
+            paymentTerms: $request->input('payment_terms'),
+            // ✅ Logic สำคัญ: ถ้า action เป็น 'confirm' ให้ตั้งค่าเป็น true
+            confirmOrder: $request->input('action') === 'confirm'
         );
     }
 }

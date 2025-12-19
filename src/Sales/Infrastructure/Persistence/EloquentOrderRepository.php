@@ -10,7 +10,7 @@ class EloquentOrderRepository implements OrderRepositoryInterface
 {
     public function save(Order $order): void
     {
-        // 1. บันทึก Header (เหมือนเดิม)
+        // 1. บันทึก Header
         $model = SalesOrderModel::updateOrCreate(
             ['id' => $order->getId()],
             [
@@ -23,14 +23,11 @@ class EloquentOrderRepository implements OrderRepositoryInterface
                 'currency' => 'THB',
                 'note' => $order->getNote(),
                 'payment_terms' => $order->getPaymentTerms(),
-                // ✅ [เพิ่ม] บันทึก salesperson_id
                 'salesperson_id' => $order->getSalespersonId(),
             ]
         );
 
-        // 2. Sync Items (แบบฉลาด) ✅
-
-        // รวบรวม ID ของสินค้าที่ยังอยู่ใน Order (จาก Domain)
+        // 2. Sync Items
         $currentIds = [];
 
         foreach ($order->getItems() as $item) {
@@ -58,14 +55,11 @@ class EloquentOrderRepository implements OrderRepositoryInterface
             }
         }
 
-        // 3. ลบรายการที่ "หายไป" จาก Domain ออกจาก DB
-        // (เฉพาะรายการที่ไม่ได้ถูกอ้างอิงโดย picking slip เท่านั้น ถ้ากลัว Error ก็ try-catch ไว้)
+        // 3. ลบรายการที่ "หายไป" ออก
         try {
             $model->items()->whereNotIn('id', $currentIds)->delete();
         } catch (\Exception $e) {
-            // ถ้าลบไม่ได้ (เพราะติด Foreign Key) อาจจะปล่อยผ่าน หรือ Log ไว้
-            // แต่ตาม Flow ปกติ User ไม่ควรลบสินค้าที่ถูก Pick ไปแล้ว
-            // โค้ดนี้จะช่วยให้รายการอื่นๆ ที่ไม่ติดปัญหาทำงานต่อได้
+            // Ignore fk constraint error just in case
         }
     }
 
@@ -82,17 +76,15 @@ class EloquentOrderRepository implements OrderRepositoryInterface
             id: $model->id,
             orderNumber: $model->order_number,
             customerId: $model->customer_id,
-
-            // ✅ ส่งค่าจาก DB หรือ Default ถ้าเป็นข้อมูลเก่า
             companyId: $model->company_id ?? 'DEFAULT_COMPANY',
             warehouseId: $model->warehouse_id ?? 'DEFAULT_WAREHOUSE',
-
-            // ✅ เพิ่มบรรทัดนี้
             salespersonId: $model->salesperson_id,
-
             statusString: $model->status,
             totalAmount: (float) $model->total_amount,
-            itemsData: $model->items,
+
+            // ✅ [FIXED] ต้องแปลง Collection เป็น Array ก่อนส่งให้ Domain Entity
+            itemsData: $model->items->toArray(),
+
             note: $model->note ?? '',
             paymentTerms: $model->payment_terms ?? 'immediate'
         );

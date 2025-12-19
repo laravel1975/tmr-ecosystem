@@ -14,16 +14,17 @@ use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMe
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Domain\Events\OrderUpdated;
 use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
-// ✅ Import Interface แทน Model
-use TmrEcosystem\Sales\Application\Contracts\LogisticsStatusCheckerInterface;
+use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
+// ✅ [เพิ่ม] Import DTOs สำหรับ Snapshot
+use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
+use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
 
 class UpdateOrderUseCase
 {
     public function __construct(
         private OrderRepositoryInterface $orderRepository,
         private ProductCatalogInterface $productCatalog,
-        private CreditCheckService $creditCheckService,
-        private LogisticsStatusCheckerInterface $logisticsStatusChecker // ✅ Inject Interface
+        private CreditCheckService $creditCheckService
     ) {}
 
     public function handle(string $orderId, UpdateOrderDto $dto): Order
@@ -37,8 +38,9 @@ class UpdateOrderUseCase
             throw new Exception("Cannot update finalized orders.");
         }
 
-        // ✅ ใช้ Interface ตรวจสอบสถานะ Logistics (Clean Architecture)
-        if ($this->logisticsStatusChecker->isPickingStarted($order->getId())) {
+        // [GUARD 1] Logistics Status Check
+        $pickingSlip = PickingSlip::where('order_id', $order->getId())->first();
+        if ($pickingSlip && in_array($pickingSlip->status, ['in_progress', 'done', 'packed', 'shipped'])) {
             throw new Exception("Cannot update order: Picking process has already started. Please contact warehouse.");
         }
 
@@ -48,7 +50,7 @@ class UpdateOrderUseCase
         $productIds = array_map(fn($item) => $item->productId, $dto->items);
         $products = $this->productCatalog->getProductsByIds($productIds);
 
-        // Financial Control Check
+        // [GUARD 2] Financial Control Check
         $newGrandTotal = 0;
         foreach ($dto->items as $itemDto) {
              if ($itemDto->quantity <= 0) continue;
@@ -67,11 +69,6 @@ class UpdateOrderUseCase
 
             $order->updateDetails($dto->customerId, $dto->note, $dto->paymentTerms);
 
-            // Preserve State Logic (จากรอบที่แล้ว)
-            $existingItemsMap = $order->getItems()
-                ->mapWithKeys(fn($item) => [$item->id => $item->qtyShipped])
-                ->toArray();
-
             $order->clearItems();
 
             foreach ($dto->items as $itemDto) {
@@ -80,18 +77,12 @@ class UpdateOrderUseCase
                 $product = $products[$itemDto->productId] ?? null;
                 if (!$product) continue;
 
-                $preservedQtyShipped = 0;
-                if ($itemDto->id && isset($existingItemsMap[$itemDto->id])) {
-                    $preservedQtyShipped = $existingItemsMap[$itemDto->id];
-                }
-
                 $order->addItem(
                     productId: $product->id,
                     productName: $product->name,
                     price: $product->price,
                     quantity: $itemDto->quantity,
-                    id: $itemDto->id,
-                    qtyShipped: $preservedQtyShipped
+                    id: $itemDto->id
                 );
             }
 
@@ -122,7 +113,26 @@ class UpdateOrderUseCase
             }
 
             if ($isJustConfirmed) {
-                OrderConfirmed::dispatch($orderId);
+                // ✅ [FIXED] เตรียมข้อมูล Snapshot ก่อนส่ง Event
+                $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
+                    productId: $item->productId,
+                    productName: $item->productName,
+                    quantity: $item->quantity,
+                    unitPrice: $item->unitPrice
+                ))->toArray();
+
+                $snapshot = new OrderSnapshotDto(
+                    orderId: $order->getId(),
+                    orderNumber: $order->getOrderNumber(),
+                    customerId: $order->getCustomerId(),
+                    companyId: $order->getCompanyId(),
+                    warehouseId: $order->getWarehouseId(),
+                    items: $itemsSnapshot,
+                    note: $order->getNote()
+                );
+
+                // ส่งไปทั้ง 2 Arguments
+                OrderConfirmed::dispatch($orderId, $snapshot);
             }
             elseif ($wasConfirmed) {
                 OrderUpdated::dispatch($order);
