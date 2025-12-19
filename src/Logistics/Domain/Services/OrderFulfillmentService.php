@@ -33,10 +33,9 @@ class OrderFulfillmentService
 
             // 1. สร้าง Picking Slip Header จากข้อมูลใน Event
             $pickingSlip = PickingSlip::create([
-                'order_id' => $orderSnapshot->orderId, // ใช้ ID ที่ส่งมา
+                'order_id' => $orderSnapshot->orderId,
                 'order_number' => $orderSnapshot->orderNumber,
-                'customer_id' => $orderSnapshot->customerId, // Logistics อาจจะยังต้องเก็บ Ref นี้ไว้
-                // [FIX] เพิ่ม Company ID (สำคัญมากสำหรับ Multi-tenant)
+                'customer_id' => $orderSnapshot->customerId,
                 'company_id' => $orderSnapshot->companyId,
                 'warehouse_id' => $orderSnapshot->warehouseId,
                 'picking_number' => 'PK-' . date('Ymd') . '-' . strtoupper(Str::random(6)),
@@ -44,24 +43,27 @@ class OrderFulfillmentService
                 'created_at' => now(),
             ]);
 
-            // 2. สร้าง Picking Slip Items จาก Array ใน DTO
-            foreach ($orderSnapshot->items as $itemDto) {
+            // 2. คำนวณและเตรียมข้อมูลรายการสินค้า (เรียกฟังก์ชัน helper ด้านล่าง)
+            $pickingItems = $this->calculatePickingPlan($orderSnapshot);
+
+            // 3. สร้าง Picking Slip Items จาก Array ที่เตรียมไว้แล้ว (แก้ไขตรงนี้)
+            foreach ($pickingItems as $itemData) {
                 PickingSlipItem::create([
-                    'picking_slip_id' => $pickingSlip->id,
-                    // Map ข้อมูลจาก DTO -> Logistics Schema
-                    'sales_order_item_id' => $itemDto->productId, // หรือใช้ ID ของ Item ถ้ามีใน DTO
-                    'product_name' => $itemDto->productName,
-                    'quantity_requested' => $itemDto->quantity,
-                    'quantity_picked' => 0, // เริ่มต้นยังไม่ได้หยิบ
+                    'picking_slip_id'     => $pickingSlip->id,
+                    'sales_order_item_id' => $itemData['sales_order_item_id'],
+                    'product_id'          => $itemData['product_id'],      // ค่านี้ถูกเตรียมมาอย่างดีแล้วจาก calculatePickingPlan
+                    'product_name'        => $itemData['product_name'],
+                    'quantity_requested'  => $itemData['quantity_requested'],
+                    'quantity_picked'     => $itemData['quantity_picked'],
                 ]);
             }
 
-            Log::info("Logistics: Created Picking Slip #{$pickingSlip->id} for Order {$orderSnapshot->orderNumber} using Event Snapshot.");
+            Log::info("Logistics: Created Picking Slip #{$pickingSlip->id} for Order {$orderSnapshot->orderNumber} via Snapshot.");
         });
     }
 
     /**
-     * Main Function: จัดสรรสินค้าและสร้างเอกสาร Logistics
+     * Main Function: จัดสรรสินค้าและสร้างเอกสาร Logistics (Legacy / Direct DB)
      */
     public function fulfillOrder(string $orderId): void
     {
@@ -117,12 +119,8 @@ class OrderFulfillmentService
                         );
 
                         if ($stockLevel) {
-                            // ✅ [REFACTORED] ลบ Pre-check (if available > qty) ออก
-                            // ให้ Domain Model (StockLevel) เป็นคนตัดสินใจ
-                            // ถ้าของไม่พอ มันจะ Throw InsufficientStockException เอง
-
                             $stockLevel->reserveSoft($qtyToPick);
-                            $this->stockRepo->save($stockLevel, []); // อย่าลืม [] เพื่อแก้ ArgumentCountError
+                            $this->stockRepo->save($stockLevel, []);
 
                             $qtyAllocatedThisRound += $qtyToPick;
                             $itemsToCreate[] = [
@@ -132,13 +130,9 @@ class OrderFulfillmentService
                             ];
                         }
                     } catch (InsufficientStockException $e) {
-                        // Handle Business Logic: ของไม่พอใน Location นี้
-                        // เราเลือกที่จะ "ข้าม" ไป Location ถัดไป หรือหยิบเท่าที่มี (ในที่นี้คือข้าม)
                         Log::warning("Fulfillment: Allocation skipped at {$locationUuid} - " . $e->getMessage());
                     } catch (Exception $e) {
-                        // System Error (เช่น DB Connection)
                         Log::error("Fulfillment: System error reserving stock - " . $e->getMessage());
-                        // กรณีนี้อาจเลือก throw เพื่อให้ Job Retry หรือ catch เพื่อข้ามรายการ
                     }
                 }
 
@@ -189,5 +183,34 @@ class OrderFulfillmentService
         ]);
 
         Log::info("Fulfillment: Created documents for Order {$order->order_number}");
+    }
+
+    /**
+     * คำนวณแผนการหยิบสินค้า (Picking Plan) จากข้อมูล Order Snapshot
+     * Helper Function สำหรับแปลง DTO ให้เป็น Array ที่พร้อม Save
+     */
+    private function calculatePickingPlan(OrderSnapshotDto $snapshot): array
+    {
+        $plan = [];
+
+        foreach ($snapshot->items as $item) {
+            // เช็คชื่อตัวแปรที่ส่งมาจาก DTO (รองรับทั้ง camelCase และ snake_case)
+            $productId = $item->productId ?? $item->product_id ?? null;
+
+            if (!$productId) {
+                Log::warning("Logistics: Skipping item in Order {$snapshot->orderNumber} due to missing Product ID.");
+                continue;
+            }
+
+            $plan[] = [
+                'sales_order_item_id' => $item->id,
+                'product_id'          => $productId,
+                'product_name'        => $item->productName ?? $item->product_name ?? 'Unknown Product',
+                'quantity_requested'  => $item->quantity,
+                'quantity_picked'     => 0,
+            ];
+        }
+
+        return $plan;
     }
 }

@@ -29,6 +29,8 @@ use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseM
 
 // ✅ Import Service Interface
 use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
+use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
+use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 use TmrEcosystem\Stock\Application\Contracts\StockCheckServiceInterface;
 // ✅ [เพิ่ม] Traceability Service
 use TmrEcosystem\Sales\Application\Services\OrderTraceabilityService;
@@ -212,7 +214,6 @@ class OrderController extends Controller
             'items.*.quantity' => 'required|integer|min:1',
             'note' => 'nullable|string',
             'payment_terms' => 'nullable|string',
-            // อนุญาตให้รับ salesperson_id กรณี Manager สั่งมา
             'salesperson_id' => 'nullable|exists:users,id',
         ]);
 
@@ -225,24 +226,17 @@ class OrderController extends Controller
             ->first();
 
         if (!$warehouse) {
-            return back()->with('error', 'ไม่พบคลังสินค้า (Warehouse) ในระบบ กรุณาสร้างคลังสินค้าก่อนทำรายการ');
+            return back()->with('error', 'ไม่พบคลังสินค้า (Warehouse) ในระบบ');
         }
 
         $warehouseId = $warehouse->uuid;
 
-        // 2. ระบุ Salesperson
+        // 2. Salesperson
         $salespersonId = $request->filled('salesperson_id')
             ? $request->salesperson_id
             : $user->id;
 
-        // เตรียมข้อมูลสำหรับ DTO
         $inputData = $validated;
-
-        // ⚠️ หมายเหตุ: เราจะไม่ส่ง confirm_order = true ไปให้ UseCase แล้ว
-        // เพราะเราจะมาจัดการ Manual Confirm เองข้างล่างตามที่คุณต้องการ
-        // if ($request->input('action') === 'confirm') {
-        //    $inputData['confirm_order'] = true;
-        // }
 
         try {
             // 3. สร้าง DTO
@@ -253,21 +247,43 @@ class OrderController extends Controller
                 salespersonId: $salespersonId
             );
 
-            // 4. เรียก UseCase สร้าง Order (จะได้สถานะ Draft กลับมา)
+            // 4. เรียก UseCase สร้าง Order (ได้สถานะ Draft)
             $order = $useCase->handle($dto);
 
-            // ✅ 5. ประยุกต์ใช้ Logic Manual Confirm ที่คุณต้องการ
+            // ✅ 5. Logic Manual Confirm
             if ($request->input('action') === 'confirm') {
 
-                dd("Test Confirm");
-                // อัปเดตสถานะใน Database โดยตรง
+                // อัปเดตสถานะใน Database
                 SalesOrderModel::where('id', $order->getId())->update(['status' => 'confirmed']);
 
-                // Dispatch Event
-                // หมายเหตุ: ตรวจสอบ Event OrderConfirmed ว่ารับค่าเป็น ID (string) หรือ Object
-                // ถ้าใน Event __construct รับ string $orderId ให้ใช้ $order->getId()
-                // ถ้าใน Event __construct รับ Order $order ให้ใช้ $order
-                OrderConfirmed::dispatch($order);
+                // -------------------------------------------------------------
+                // 🔴 [FIXED] Re-fetch Order เพื่อให้ได้ Item IDs ที่ถูกต้องจาก DB
+                // -------------------------------------------------------------
+                // เพราะ $order เดิมที่ได้จาก UseCase อาจจะยังไม่มี ID ของ Item
+                // เนื่องจากเป็น Object ใน Memory ก่อน Save
+                $freshOrder = $this->orderRepository->findById($order->getId());
+
+                // ✅ ใช้ $freshOrder แทน $order ในการทำ Snapshot
+                $itemsSnapshot = $freshOrder->getItems()->map(fn($item) => new OrderItemSnapshotDto(
+                    id: $item->id, // ตอนนี้จะมีค่าแล้ว เพราะดึงมาจาก DB
+                    productId: $item->productId,
+                    productName: $item->productName,
+                    quantity: $item->quantity,
+                    unitPrice: $item->unitPrice
+                ))->toArray();
+
+                $snapshot = new OrderSnapshotDto(
+                    orderId: $freshOrder->getId(),
+                    orderNumber: $freshOrder->getOrderNumber(),
+                    customerId: $freshOrder->getCustomerId(),
+                    companyId: $freshOrder->getCompanyId(),
+                    warehouseId: $freshOrder->getWarehouseId(),
+                    items: $itemsSnapshot,
+                    note: $freshOrder->getNote()
+                );
+
+                // ส่ง Event
+                OrderConfirmed::dispatch($freshOrder->getId(), $snapshot);
             }
 
             return to_route('sales.orders.show', $order->getId())
@@ -275,7 +291,6 @@ class OrderController extends Controller
         } catch (Exception $e) {
             Log::error("Create Order Failed: " . $e->getMessage());
 
-            // กรณี Error แต่ Order ถูกสร้างไปแล้ว (เช่น Confirm ไม่ผ่าน)
             if (isset($order) && $order->getId()) {
                 return to_route('sales.orders.show', $order->getId())
                     ->with('error', 'บันทึกออเดอร์แล้ว แต่มีข้อผิดพลาด: ' . $e->getMessage());
@@ -535,7 +550,6 @@ class OrderController extends Controller
 
             return to_route('sales.orders.edit', $id)
                 ->with('success', $message);
-
         } catch (Exception $e) {
             Log::error("Order Update Failed: " . $e->getMessage());
             return back()->with('error', 'เกิดข้อผิดพลาด: ' . $e->getMessage());

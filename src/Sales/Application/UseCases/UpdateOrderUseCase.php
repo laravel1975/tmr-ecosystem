@@ -53,11 +53,11 @@ class UpdateOrderUseCase
         // [GUARD 2] Financial Control Check
         $newGrandTotal = 0;
         foreach ($dto->items as $itemDto) {
-             if ($itemDto->quantity <= 0) continue;
-             $product = $products[$itemDto->productId] ?? null;
-             if ($product) {
-                 $newGrandTotal += $product->price * $itemDto->quantity;
-             }
+            if ($itemDto->quantity <= 0) continue;
+            $product = $products[$itemDto->productId] ?? null;
+            if ($product) {
+                $newGrandTotal += $product->price * $itemDto->quantity;
+            }
         }
 
         if (($wasConfirmed || $dto->confirmOrder) && $newGrandTotal > $oldTotal) {
@@ -100,7 +100,10 @@ class UpdateOrderUseCase
                 $sign = $diff > 0 ? '+' : '';
                 $logMessage = sprintf(
                     "มีการแก้ไขรายการสินค้า: ยอดรวมเปลี่ยนจาก %s ฿ เป็น %s ฿ (ส่วนต่าง: %s%s ฿)",
-                    number_format($oldTotal, 2), number_format($newTotal, 2), $sign, number_format($diff, 2)
+                    number_format($oldTotal, 2),
+                    number_format($newTotal, 2),
+                    $sign,
+                    number_format($diff, 2)
                 );
 
                 CommunicationMessage::create([
@@ -113,13 +116,19 @@ class UpdateOrderUseCase
             }
 
             if ($isJustConfirmed) {
-                // ✅ [FIXED] เตรียมข้อมูล Snapshot ก่อนส่ง Event
-                $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
-                    productId: $item->productId,
-                    productName: $item->productName,
-                    quantity: $item->quantity,
-                    unitPrice: $item->unitPrice
-                ))->toArray();
+                // ✅ [DEBUG MODE] ใส่ dd($item) เพื่อดูโครงสร้างข้อมูลจริงๆ
+                // เมื่อกดรันแล้ว ให้แคปหน้าจอผลลัพธ์ หรือก๊อปปี้ชื่อตัวแปรที่เห็นมาให้ผมครับ
+                // ✅ [FINAL FIX] Map ข้อมูลตามโครงสร้างจริงที่เห็นใน dd()
+                $itemsSnapshot = $order->getItems()->map(function ($item) {
+                    return new OrderItemSnapshotDto(
+                        $item->id,                          // มีอยู่จริง (เห็นในรูปบรรทัดรองสุดท้าย)
+                        $item->productId,                   // ใช้ camelCase ตามรูป
+                        $item->productName,                 // ใช้ camelCase ตามรูป
+                        (float) $item->quantity,
+                        (float) $item->unitPrice,
+                        (float) $item->unitPrice * (float) $item->quantity // ⚠️ คำนวณ Subtotal เอง เพราะไม่มี property นี้
+                    );
+                })->toArray();
 
                 $snapshot = new OrderSnapshotDto(
                     orderId: $order->getId(),
@@ -131,10 +140,8 @@ class UpdateOrderUseCase
                     note: $order->getNote()
                 );
 
-                // ส่งไปทั้ง 2 Arguments
-                OrderConfirmed::dispatch($orderId, $snapshot);
-            }
-            elseif ($wasConfirmed) {
+                OrderConfirmed::dispatch($order->getId(), $snapshot);
+            } elseif ($wasConfirmed) {
                 OrderUpdated::dispatch($order);
             }
 

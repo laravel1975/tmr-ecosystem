@@ -16,7 +16,6 @@ use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
-// ✅ Import Interface ใหม่
 use TmrEcosystem\Sales\Application\Contracts\StockReservationInterface;
 
 class PlaceOrderUseCase
@@ -25,7 +24,7 @@ class PlaceOrderUseCase
         private OrderRepositoryInterface $orderRepository,
         private ProductCatalogInterface $productCatalog,
         private CreditCheckService $creditCheckService,
-        private StockReservationInterface $stockReservation // ✅ Inject Reservation Service
+        private StockReservationInterface $stockReservation
     ) {}
 
     /**
@@ -33,6 +32,7 @@ class PlaceOrderUseCase
      */
     public function handle(CreateOrderDto $dto): Order
     {
+        // ... (Logic ส่วนแรกคงเดิม: Prepare Data, Resolve Salesperson, Financial Control) ...
         // 1. Prepare Data
         $productIds = array_map(fn($item) => $item->productId, $dto->items);
         $products = $this->productCatalog->getProductsByIds($productIds);
@@ -84,7 +84,6 @@ class PlaceOrderUseCase
                     quantity: $itemDto->quantity
                 );
 
-                // เก็บข้อมูลเตรียมจอง
                 $reservationItems[] = [
                     'product_id' => $product->id,
                     'quantity' => $itemDto->quantity
@@ -100,7 +99,6 @@ class PlaceOrderUseCase
 
             // 7. Confirm Order & Reserve Stock
             if ($dto->confirmOrder) {
-                // ✅ จองสินค้าทันที (ถ้าของไม่พอจะ Error และ Rollback ทั้งหมด)
                 $this->stockReservation->reserveItems(
                     orderId: $order->getId(),
                     items: $reservationItems,
@@ -108,9 +106,6 @@ class PlaceOrderUseCase
                 );
 
                 $order->confirm();
-            } else {
-                // ถ้าเป็น Draft อาจจะยังไม่จอง หรือจองแบบมี Expiry (แล้วแต่ Business Rule)
-                // ในที่นี้สมมติว่า Draft ยังไม่จอง
             }
 
             // 8. Save Aggregate
@@ -127,7 +122,9 @@ class PlaceOrderUseCase
 
             // 10. Dispatch Event
             if ($order->getStatus() === OrderStatus::Confirmed) {
+                // Prepare Snapshot DTO
                 $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
+                    id: $item->getId(),
                     productId: $item->productId,
                     productName: $item->productName,
                     quantity: $item->quantity,
@@ -144,6 +141,7 @@ class PlaceOrderUseCase
                     note: $order->getNote()
                 );
 
+                // ✅ [แก้ไขแล้ว] ส่ง ID (string) เป็น parameter ตัวแรก
                 OrderConfirmed::dispatch($order->getId(), $orderSnapshot);
             }
 
