@@ -15,7 +15,6 @@ use TmrEcosystem\Inventory\Application\Contracts\ItemLookupServiceInterface;
 use TmrEcosystem\Stock\Application\Services\StockPickingService;
 use TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel;
 use TmrEcosystem\Logistics\Domain\Events\PickingSlipUpdated;
-use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 
 class SyncLogisticsDocuments implements ShouldQueue
 {
@@ -196,34 +195,5 @@ class SyncLogisticsDocuments implements ShouldQueue
             return true;
         }
         return false;
-    }
-
-    /**
-     * คำนวณแผนการหยิบสินค้า (Picking Plan) จากข้อมูล Order Snapshot
-     * Helper Function สำหรับแปลง DTO ให้เป็น Array ที่พร้อม Save
-     */
-    private function calculatePickingPlan(OrderSnapshotDto $snapshot): array
-    {
-        $plan = [];
-
-        foreach ($snapshot->items as $item) {
-            // เช็คชื่อตัวแปรที่ส่งมาจาก DTO (รองรับทั้ง camelCase และ snake_case)
-            $productId = $item->productId ?? $item->product_id ?? null;
-
-            if (!$productId) {
-                Log::warning("Logistics: Skipping item in Order {$snapshot->orderNumber} due to missing Product ID.");
-                continue;
-            }
-
-            $plan[] = [
-                'sales_order_item_id' => $item->id,
-                'product_id'          => $productId,
-                'product_name'        => $item->productName ?? $item->product_name ?? 'Unknown Product',
-                'quantity_requested'  => $item->quantity,
-                'quantity_picked'     => 0,
-            ];
-        }
-
-        return $plan;
     }
 }
