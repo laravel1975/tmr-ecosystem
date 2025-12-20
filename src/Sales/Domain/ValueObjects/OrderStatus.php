@@ -5,11 +5,12 @@ namespace TmrEcosystem\Sales\Domain\ValueObjects;
 enum OrderStatus: string
 {
     case Draft = 'draft';
-    case PendingReservation = 'pending_reservation';
+    case PendingReservation = 'pending_reservation'; // รอจอง (Optional: ใช้ถ้าอยากแยกสถานะก่อน Soft Reserve)
     case Confirmed = 'confirmed';
-    case PartiallyShipped = 'partially_shipped'; // ✅ เพิ่มสถานะนี้
+    case PartiallyShipped = 'partially_shipped';
     case Completed = 'completed';
     case Cancelled = 'cancelled';
+    case OnHold = 'on_hold'; // ✅ Added: สำหรับเคสที่ระบบมีปัญหา (เช่น จองหลุด) ต้องการคนมาตรวจสอบ
 
     public function label(): string
     {
@@ -20,6 +21,12 @@ enum OrderStatus: string
             self::PartiallyShipped => 'Partially Shipped',
             self::Completed => 'Completed',
             self::Cancelled => 'Cancelled',
+            self::OnHold => 'On Hold', // ✅ Added Label
         };
+    }
+
+    public static function fromString(string $value): self
+    {
+        return self::from($value);
     }
 }

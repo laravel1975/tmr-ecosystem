@@ -26,28 +26,31 @@ class HardReserveService
             // 1. ดึง Reservation ทั้งหมดของ Order นี้
             $reservations = $this->reservationRepo->findByReferenceId($orderId);
 
+            if ($reservations->isEmpty()) {
+                // ถ้าไม่มี Reservation เลย อาจจะเป็น Order ที่ไม่มีสินค้าต้องจอง หรือข้อมูลผิดพลาด
+                return;
+            }
+
             foreach ($reservations as $reservation) {
-                // Skip ถ้าไม่ใช่ Soft Reserve
+                // Skip ถ้าไม่ใช่ Soft Reserve (เช่น อาจจะ Hard ไปแล้ว หรือ Released)
                 if ($reservation->getState() !== ReservationState::SOFT_RESERVED) {
                     continue;
                 }
 
-                // 2. Domain Logic: Change State
-                $previousState = $reservation->getState();
+                // 2. Domain Logic: Change State at Entity Level
                 $reservation->promoteToHard();
 
                 // 3. Update Inventory StockLevel (Aggregate Interaction)
-                // เราต้องย้ายยอดจาก field 'soft_reserved' ไป 'hard_reserved' ใน StockLevel ด้วย
                 $stockLevel = $this->stockLevelRepo->findByItemAndWarehouse(
                     $reservation->getInventoryItemId(),
                     $reservation->getWarehouseId()
                 );
 
                 if (!$stockLevel) {
-                    throw new Exception("Stock level mismatch for reservation {$reservation->getId()}");
+                    throw new Exception("Stock level record missing for reservation {$reservation->getId()}. Data inconsistency.");
                 }
 
-                // สั่ง StockLevel ย้ายถัง (Logic นี้ต้องอยู่ใน StockLevel Aggregate)
+                // สั่ง StockLevel ย้ายยอดจาก Soft -> Hard (Atomic Operation)
                 $stockLevel->convertSoftToHard($reservation->getQuantity());
 
                 // 4. Persist Changes
@@ -59,29 +62,40 @@ class HardReserveService
 
     /**
      * Flow 1: Create Soft Reserve (Intent)
+     * เกิดขึ้นเมื่อสร้าง Sales Order (Draft/Created)
      */
     public function createSoftReservation(string $orderId, array $items, string $warehouseId): void
     {
         DB::transaction(function () use ($orderId, $items, $warehouseId) {
             foreach ($items as $item) {
-                // Check Availability
-                $stockLevel = $this->stockLevelRepo->findByItemAndWarehouse($item['product_id'], $warehouseId);
+                $productId = $item['product_id'];
+                $quantity = (float) $item['quantity'];
 
-                if ($stockLevel->getAvailableQuantity() < $item['quantity']) {
-                    throw new Exception("Insufficient stock for item {$item['product_id']}");
+                // ค้นหา StockLevel
+                $stockLevel = $this->stockLevelRepo->findByItemAndWarehouse($productId, $warehouseId);
+
+                // Validation: ต้องมี Record ใน Inventory
+                if (!$stockLevel) {
+                    throw new Exception("Stock record not found for item {$productId} in warehouse {$warehouseId}");
                 }
 
-                // Create Reservation Entity
+                // Check Availability using Domain Logic
+                if ($stockLevel->getAvailableQuantity() < $quantity) {
+                    throw new Exception("Insufficient stock for item {$productId}. Requested: {$quantity}, Available: " . $stockLevel->getAvailableQuantity());
+                }
+
+                // Create Reservation Entity (Inventory BC)
                 $reservation = StockReservation::createSoft(
-                    $item['product_id'],
+                    $productId,
                     $warehouseId,
                     $orderId,
-                    (float) $item['quantity']
+                    $quantity
                 );
 
-                // Update StockLevel (Reserve Quantity)
-                $stockLevel->increaseSoftReserve($item['quantity']);
+                // Update StockLevel to reflect reservation (Stock BC)
+                $stockLevel->increaseSoftReserve($quantity);
 
+                // Persist both
                 $this->reservationRepo->save($reservation);
                 $this->stockLevelRepo->save($stockLevel);
             }

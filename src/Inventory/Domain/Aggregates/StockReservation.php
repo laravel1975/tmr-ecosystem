@@ -11,8 +11,8 @@ class StockReservation
 {
     private string $id;
     private string $inventoryItemId;
-    private string $warehouseId; // Optional: ถ้าจองแบบระบุคลัง
-    private string $referenceId; // Order ID
+    private string $warehouseId;
+    private string $referenceId; // Sales Order ID
     private float $quantity;
     private ReservationState $state;
     private ?DateTimeImmutable $expiresAt;
@@ -44,6 +44,10 @@ class StockReservation
         float $quantity,
         int $ttlMinutes = 60
     ): self {
+        if ($quantity <= 0) {
+            throw new Exception("Reservation quantity must be positive.");
+        }
+
         return new self(
             (string) Str::uuid(),
             $inventoryItemId,
@@ -60,14 +64,15 @@ class StockReservation
     public function promoteToHard(): void
     {
         if ($this->state !== ReservationState::SOFT_RESERVED) {
-            throw new Exception("Only SOFT reservations can be promoted to HARD.");
+            throw new Exception("Only SOFT reservations can be promoted to HARD. Current: {$this->state->value}");
         }
+
         if ($this->isExpired()) {
-            throw new Exception("Reservation expired. Cannot promote.");
+            throw new Exception("Reservation has expired. Cannot promote.");
         }
 
         $this->state = ReservationState::HARD_RESERVED;
-        $this->expiresAt = null; // Hard Reserve ไม่มีวันหมดอายุ (จนกว่าจะ Picking)
+        $this->expiresAt = null; // Hard Reserve ไม่มีวันหมดอายุ จนกว่าจะ Picking
     }
 
     public function markAsPicking(): void
@@ -81,9 +86,10 @@ class StockReservation
     public function release(): void
     {
         if ($this->state === ReservationState::FULFILLED) {
-             throw new Exception("Cannot release fulfilled reservation.");
+             throw new Exception("Cannot release a fulfilled reservation.");
         }
         $this->state = ReservationState::RELEASED;
+        $this->expiresAt = null;
     }
 
     public function isExpired(): bool
