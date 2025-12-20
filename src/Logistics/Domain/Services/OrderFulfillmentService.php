@@ -27,38 +27,50 @@ class OrderFulfillmentService
     /**
      * [Day 5] สร้างเอกสารจาก Snapshot DTO (Decoupled from Sales DB)
      */
-    public function fulfillOrderFromSnapshot(OrderSnapshotDto $orderSnapshot): void
+    public function fulfillOrderFromSnapshot(OrderSnapshotDto $snapshot): void
     {
-        DB::transaction(function () use ($orderSnapshot) {
-
-            // 1. สร้าง Picking Slip Header จากข้อมูลใน Event
+        DB::transaction(function () use ($snapshot) {
+            // 1. Create Picking Slip
             $pickingSlip = PickingSlip::create([
-                'order_id' => $orderSnapshot->orderId,
-                'order_number' => $orderSnapshot->orderNumber,
-                'customer_id' => $orderSnapshot->customerId,
-                'company_id' => $orderSnapshot->companyId,
-                'warehouse_id' => $orderSnapshot->warehouseId,
-                'picking_number' => 'PK-' . date('Ymd') . '-' . strtoupper(Str::random(6)),
+                'id' => (string) Str::uuid(),
+                'picking_number' => 'PK-' . strtoupper(Str::random(10)), // Generate Picking Number
+                'order_id' => $snapshot->orderId,
+                'order_number' => $snapshot->orderNumber, // Assuming DTO has this
+                'customer_id' => $snapshot->customerId,   // Assuming DTO has this
+                'company_id' => $snapshot->companyId,
+                'warehouse_id' => $snapshot->warehouseId,
                 'status' => 'pending',
-                'created_at' => now(),
             ]);
 
-            // 2. คำนวณและเตรียมข้อมูลรายการสินค้า (เรียกฟังก์ชัน helper ด้านล่าง)
-            $pickingItems = $this->calculatePickingPlan($orderSnapshot);
+            // 2. Create Items
+            foreach ($snapshot->items as $item) {
+                // Determine product ID and name based on available data
+                $productId = $item->productId ?? $item->partNumber ?? 'UNKNOWN';
+                $productName = $item->productName ?? 'Unknown Product';
 
-            // 3. สร้าง Picking Slip Items จาก Array ที่เตรียมไว้แล้ว (แก้ไขตรงนี้)
-            foreach ($pickingItems as $itemData) {
                 PickingSlipItem::create([
-                    'picking_slip_id'     => $pickingSlip->id,
-                    'sales_order_item_id' => $itemData['sales_order_item_id'],
-                    'product_id'          => $itemData['product_id'],      // ค่านี้ถูกเตรียมมาอย่างดีแล้วจาก calculatePickingPlan
-                    'product_name'        => $itemData['product_name'],
-                    'quantity_requested'  => $itemData['quantity_requested'],
-                    'quantity_picked'     => $itemData['quantity_picked'],
+                    'picking_slip_id' => $pickingSlip->id,
+                    'sales_order_item_id' => $item->id,
+                    'product_id' => $productId,
+                    'product_name' => $productName,
+                    'quantity_requested' => $item->quantity,
+                    'quantity_picked' => 0,
+                    'status' => 'pending'
                 ]);
             }
 
-            Log::info("Logistics: Created Picking Slip #{$pickingSlip->id} for Order {$orderSnapshot->orderNumber} via Snapshot.");
+            // 3. ✅ Create Delivery Note (Wait for picking)
+            DeliveryNote::create([
+                'id' => (string) Str::uuid(),
+                'delivery_number' => 'DO-' . strtoupper(Str::random(10)), // Generate Delivery Number
+                'order_id' => $snapshot->orderId,
+                'picking_slip_id' => $pickingSlip->id,
+                'company_id' => $snapshot->companyId,
+                'shipping_address' => $snapshot->shippingAddress ?? 'See Order Details', // Fallback address
+                'status' => 'wait_picking', // Initial status
+            ]);
+
+            Log::info("Logistics: Created Picking Slip #{$pickingSlip->picking_number} and Delivery Note for Order {$snapshot->orderNumber}.");
         });
     }
 

@@ -2,262 +2,140 @@
 
 namespace TmrEcosystem\Stock\Domain\Aggregates;
 
-use TmrEcosystem\Stock\Domain\Exceptions\InsufficientStockException;
+use DateTimeImmutable;
 use Exception;
+use TmrEcosystem\Stock\Domain\Events\StockLevelUpdated;
+use TmrEcosystem\Stock\Domain\Events\StockReserved; // New Event
 
 class StockLevel
 {
+    private string $id;
+    private string $inventoryItemId;
+    private string $warehouseId;
+    private string $locationId;
     private float $quantityOnHand;
-    private float $quantityReserved;     // Hard Reserve
-    private float $quantitySoftReserved; // Soft Reserve
+    private float $quantitySoftReserved;
+    private float $quantityHardReserved; // ✅ เพิ่ม Hard Reserve แยกชัดเจน
+
+    // Tracking reservations to handle expiration (Simplified)
+    private array $softReservations = [];
 
     public function __construct(
-        private ?int $dbId,
-        private string $uuid,
-        private string $companyId,
-        private string $itemUuid,
-        private string $warehouseUuid, // เก็บไว้เพื่อ Performance (Denormalize)
-        private string $locationUuid,
+        string $id,
+        string $inventoryItemId,
+        string $warehouseId,
+        string $locationId,
         float $quantityOnHand = 0,
-        float $quantityReserved = 0,
-        float $quantitySoftReserved = 0
+        float $quantitySoftReserved = 0,
+        float $quantityHardReserved = 0
     ) {
-        if ($quantityOnHand < 0 || $quantityReserved < 0 || $quantitySoftReserved < 0) {
-            throw new Exception("Stock quantities cannot be negative.");
-        }
+        $this->id = $id;
+        $this->inventoryItemId = $inventoryItemId;
+        $this->warehouseId = $warehouseId;
+        $this->locationId = $locationId;
         $this->quantityOnHand = $quantityOnHand;
-        $this->quantityReserved = $quantityReserved;
         $this->quantitySoftReserved = $quantitySoftReserved;
+        $this->quantityHardReserved = $quantityHardReserved;
     }
 
-    // Factory Method ปรับปรุงใหม่
-    public static function create(
-        string $uuid,
-        string $companyId,
-        string $itemUuid,
-        string $warehouseUuid,
-        string $locationUuid
-    ): self {
-        return new self(null, $uuid, $companyId, $itemUuid, $warehouseUuid, $locationUuid, 0, 0, 0);
-    }
-
-    // --- Business Logic ---
+    // --- Domain Logic ---
 
     public function getAvailableQuantity(): float
     {
-        // ต้องใช้ camelCase ทั้งหมด
-        return $this->quantityOnHand - ($this->quantityReserved + $this->quantitySoftReserved);
-    }
-
-    public function issue(float $quantityToIssue, ?string $userId, ?string $reference): StockMovement
-    {
-        if ($quantityToIssue <= 0) throw new Exception("Quantity must be positive.");
-        if ($quantityToIssue > $this->getAvailableQuantity()) {
-            throw new InsufficientStockException("Not enough available stock.");
-        }
-
-        $this->quantityOnHand -= $quantityToIssue;
-
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "ISSUE",
-            quantityChange: -$quantityToIssue,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: $reference
-        );
-    }
-
-    public function receive(float $quantityToReceive, ?string $userId, ?string $reference): StockMovement
-    {
-        if ($quantityToReceive <= 0) throw new Exception("Quantity must be positive.");
-        $this->quantityOnHand += $quantityToReceive;
-
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "RECEIPT",
-            quantityChange: +$quantityToReceive,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: $reference
-        );
-    }
-
-    // ✅ [เพิ่มใหม่] ย้ายของออก (Transfer Source)
-    public function transferOut(float $quantity, ?string $userId, string $toLocationCode): StockMovement
-    {
-        if ($quantity <= 0) throw new Exception("Quantity must be positive.");
-        if ($quantity > $this->getAvailableQuantity()) {
-            throw new InsufficientStockException("Not enough available stock to transfer.");
-        }
-
-        $this->quantityOnHand -= $quantity;
-
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "TRANSFER_OUT", // Type เฉพาะ
-            quantityChange: -$quantity,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: "To: " . $toLocationCode
-        );
-    }
-
-    // ✅ [เพิ่มใหม่] รับของจากการย้าย (Transfer Destination)
-    public function transferIn(float $quantity, ?string $userId, string $fromLocationCode): StockMovement
-    {
-        if ($quantity <= 0) throw new Exception("Quantity must be positive.");
-
-        $this->quantityOnHand += $quantity;
-
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "TRANSFER_IN", // Type เฉพาะ
-            quantityChange: +$quantity,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: "From: " . $fromLocationCode
-        );
-    }
-
-    public function reserve(float $quantityToReserve): void
-    {
-        if ($quantityToReserve <= 0) throw new Exception("Quantity must be positive.");
-        if ($quantityToReserve > $this->getAvailableQuantity()) {
-            throw new InsufficientStockException("Not enough available stock.");
-        }
-        $this->quantityReserved += $quantityToReserve;
+        return $this->quantityOnHand - $this->quantitySoftReserved - $this->quantityHardReserved;
     }
 
     /**
-     * จองสินค้า (Soft Reserve)
+     * Soft Reserve: จองชั่วคราว (เช่น รอชำระเงิน)
+     * มี TTL ถ้าเกินเวลาต้อง Release คืนได้ (ผ่าน Scheduled Job)
      */
-    public function reserveSoft(float $quantity): void
+    public function reserveSoft(float $amount, string $referenceId, ?DateTimeImmutable $expiresAt = null): void
     {
-        if ($quantity <= 0) return;
-
-        // 1. เช็คก่อนว่ามีของพอให้จองหรือไม่ (Available = Hand - Reserved - SoftReserved)
-        if ($this->getAvailableQuantity() < $quantity) {
-             throw new InsufficientStockException(
-                 "Stock insufficient. Available: {$this->getAvailableQuantity()}, Requested: {$quantity}"
-             );
+        if ($amount <= 0) {
+            throw new Exception("Reservation amount must be positive.");
         }
 
-        // 2. ✅ แก้ไข: ใช้ camelCase (quantitySoftReserved) ให้ตรงกับที่ประกาศไว้บนหัว Class
-        $this->quantitySoftReserved += $quantity;
-    }
+        if ($this->getAvailableQuantity() < $amount) {
+            throw new Exception("Insufficient stock available for reservation.");
+        }
 
-    public function commitReservation(float $quantity): void
-    {
-        if ($quantity <= 0) return;
-        $this->quantitySoftReserved = max(0, $this->quantitySoftReserved - $quantity);
-        $this->quantityReserved += $quantity;
-    }
+        $this->quantitySoftReserved += $amount;
 
-    public function releaseSoftReservation(float $quantity): void
-    {
-        if ($quantity <= 0) return;
-        $this->quantitySoftReserved = max(0, $this->quantitySoftReserved - $quantity);
+        // ในระบบจริงควรเก็บ $softReservations ลง Table แยก (stock_reservations)
+        // เพื่อทำ TTL Cleanup แต่ใน Aggregate นี้เรา update state รวม
+
+        // Emit Event
+        // record(new StockReserved($this->id, $amount, 'SOFT', $referenceId));
     }
 
     /**
-     * ✅ [เพิ่มใหม่] ปลด Hard Reserve (กรณี Unload / Cancel Delivery)
-     * ไม่เพิ่ม OnHand (เพราะของยังไม่ออก) แต่ลด Reserved คืนกลับเป็น Available
+     * Hard Reserve: ล็อคเพื่อ Picking (เปลี่ยนจาก Soft -> Hard)
+     * หรือจองตรงๆ สำหรับ Backorder ที่ของเข้าแล้ว
      */
-    public function releaseHardReservation(float $quantity): void
+    public function commitToHardReserve(float $amount): void
     {
-        if ($quantity <= 0) return;
-        $this->quantityReserved = max(0, $this->quantityReserved - $quantity);
+        // กรณี convert จาก Soft Reserve
+        if ($this->quantitySoftReserved >= $amount) {
+            $this->quantitySoftReserved -= $amount;
+            $this->quantityHardReserved += $amount;
+        }
+        // กรณีจองใหม่เลย (ต้องเช็ค Available)
+        elseif ($this->getAvailableQuantity() >= $amount) {
+            $this->quantityHardReserved += $amount;
+        } else {
+            throw new Exception("Cannot commit stock. Insufficient availability.");
+        }
     }
 
     /**
-     * ✅ [ปรับปรุง] Smart Ship (ตัดสต็อก)
+     * Issue Stock: ตัดของจริงเมื่อ Shipment
      */
-    public function shipReserved(float $quantity, ?string $userId, ?string $ref): StockMovement
+    public function issueStock(float $amount): void
     {
-        if ($quantity <= 0) throw new Exception("Quantity must be positive.");
-        if ($this->quantityOnHand < $quantity) throw new InsufficientStockException("Not enough physical stock.");
-
-        $remainingToDeduct = $quantity;
-
-        // 1. ตัด Hard Reserve ก่อน
-        if ($this->quantityReserved > 0) {
-            $deducted = min($this->quantityReserved, $remainingToDeduct);
-            $this->quantityReserved -= $deducted;
-            $remainingToDeduct -= $deducted;
+        // ตัดจาก Hard Reserve ก่อน (ปกติควรเป็น Flow นี้)
+        if ($this->quantityHardReserved >= $amount) {
+            $this->quantityHardReserved -= $amount;
+            $this->quantityOnHand -= $amount;
         }
-        // 2. ถ้ายังเหลือ ตัด Soft Reserve
-        if ($remainingToDeduct > 0 && $this->quantitySoftReserved > 0) {
-            $deducted = min($this->quantitySoftReserved, $remainingToDeduct);
-            $this->quantitySoftReserved -= $deducted;
-            $remainingToDeduct -= $deducted;
+        // Fallback ตัดจาก Available (ถ้าไม่มี Hard Reserve)
+        elseif ($this->getAvailableQuantity() >= $amount) {
+            $this->quantityOnHand -= $amount;
+        } else {
+            throw new Exception("Cannot issue stock. Insufficient quantity.");
         }
 
-        $this->quantityOnHand -= $quantity;
+        if ($this->quantityOnHand < 0) {
+             throw new Exception("Stock integrity violation: Negative stock.");
+        }
+    }
 
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "SHIPMENT",
-            quantityChange: -$quantity,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: $ref
+    /**
+     * Release: ปล่อยของคืน (Cancel Order / Expired)
+     */
+    public function releaseSoftReservation(float $amount): void
+    {
+        $this->quantitySoftReserved = max(0, $this->quantitySoftReserved - $amount);
+    }
+
+    // ... Getters / Factory Methods ...
+
+    public function getId(): string { return $this->id; }
+    public function getQuantityOnHand(): float { return $this->quantityOnHand; }
+    public function getQuantitySoftReserved(): float { return $this->quantitySoftReserved; }
+    public function getQuantityHardReserved(): float { return $this->quantityHardReserved; }
+    public function getLocationUuid(): string { return $this->locationId; }
+
+    // Reconstitute from DB state
+    public static function fromStorage(object $data): self
+    {
+        return new self(
+            $data->uuid,
+            $data->item_uuid,
+            $data->warehouse_uuid,
+            $data->location_uuid,
+            (float) $data->quantity_on_hand,
+            (float) ($data->quantity_soft_reserved ?? 0),
+            (float) ($data->quantity_hard_reserved ?? 0) // New column
         );
-    }
-
-    public function adjust(float $newQuantity, ?string $userId, ?string $reason): StockMovement
-    {
-        if ($newQuantity < 0) throw new Exception("New quantity cannot be negative.");
-        $quantityChange = $newQuantity - $this->quantityOnHand;
-        if ($quantityChange == 0) throw new Exception("No adjustment needed.");
-        $this->quantityOnHand = $newQuantity;
-
-        return StockMovement::create(
-            stockLevelUuid: $this->uuid,
-            userId: $userId,
-            type: "ADJUST",
-            quantityChange: $quantityChange,
-            quantityAfterMove: $this->quantityOnHand,
-            reference: $reason
-        );
-    }
-
-    // Getters
-    public function uuid(): string
-    {
-        return $this->uuid;
-    }
-    public function itemUuid(): string
-    {
-        return $this->itemUuid;
-    }
-    public function warehouseUuid(): string
-    {
-        return $this->warehouseUuid;
-    }
-    public function locationUuid(): string
-    {
-        return $this->locationUuid;
-    }
-    public function companyId(): string
-    {
-        return $this->companyId;
-    }
-    public function getQuantityOnHand(): float
-    {
-        return $this->quantityOnHand;
-    }
-    public function getQuantityReserved(): float
-    {
-        return $this->quantityReserved;
-    }
-    public function getQuantitySoftReserved(): float
-    {
-        return $this->quantitySoftReserved;
-    }
-    // ✅ [เพิ่มเมธอดนี้] เพื่อให้ Controller เรียกใช้ได้
-    public function getLocationUuid(): string
-    {
-        return $this->locationUuid;
     }
 }
