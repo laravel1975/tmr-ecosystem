@@ -16,18 +16,8 @@ class PickingSlip extends Model
 
     protected $casts = [
         'picked_at' => 'datetime',
+        'generated_at' => 'datetime'
     ];
-
-    /**
-     * ✅ REFACTOR: Instead of a hard relationship, we treat order_id as a plain reference.
-     * If you strictly need data from Sales, fetch it via a separate Query Service or Read Model.
-     * * But if you absolutely need the relationship for Inertia views (lazy loading),
-     * define it in a specific "Read Model" class, not this Write Model.
-     */
-    // public function order()
-    // {
-    //     return $this->belongsTo(SalesOrderModel::class, 'order_id');
-    // }
 
     /**
      * Helper to get the reference ID explicitly

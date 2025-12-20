@@ -8,8 +8,7 @@ import { Card, CardContent } from '@/Components/ui/card';
 import { Button } from '@/Components/ui/button';
 import { Input } from '@/Components/ui/input';
 import { Badge } from '@/Components/ui/badge';
-import { Separator } from "@/Components/ui/separator";
-import { CheckCircle2, MapPin, Package, ArrowLeft, AlertCircle, Save, Printer, ScanBarcode, Zap } from 'lucide-react';
+import { CheckCircle2, MapPin, Package, ArrowLeft, AlertCircle, Save, Printer, ScanBarcode } from 'lucide-react';
 import ImageViewer from '@/Components/ImageViewer';
 import { cn } from '@/lib/utils';
 
@@ -19,7 +18,7 @@ import { useBarcodeScanner } from '@/Hooks/useBarcodeScanner';
 interface PickingSuggestion {
     location_uuid: string;
     location_code: string;
-    quantity: number | string; // Backend อาจส่ง string format มา
+    quantity: number | string;
 }
 
 interface PickingItem {
@@ -27,7 +26,7 @@ interface PickingItem {
     product_id: string;
     product_name: string;
     barcode: string;
-    qty_ordered: number;
+    quantity: number; // ✅ REFACTOR: เปลี่ยนจาก qty_ordered เป็น quantity ให้ตรง Backend
     qty_picked: number;
     is_completed: boolean;
     image_url?: string;
@@ -49,7 +48,6 @@ interface Props extends PageProps {
 
 export default function Process({ auth, pickingSlip, items }: Props) {
 
-    // Initialize state with previously picked quantities
     const [pickedData, setPickedData] = useState<Record<number, number>>(() => {
         const initialData: Record<number, number> = {};
         items.forEach(item => {
@@ -62,12 +60,14 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // --- Helper: คำนวณยอดที่ต้องหยิบ (Picking Target) ---
-    // ยึดตาม Picking Suggestion ที่ Backend ส่งมา (ซึ่งผ่านการ Cap ยอด min() มาแล้ว)
+    // ✅ REFACTOR: ปรับปรุง Logic ให้ Robust ขึ้น
     const getTargetQty = (item: PickingItem) => {
-        if (!item.picking_suggestions || item.picking_suggestions.length === 0) return 0;
-
-        // แปลงเป็น number ก่อนบวก (กันเหนียวเพราะบางที backend ส่ง string '20.00')
-        return item.picking_suggestions.reduce((sum, s) => sum + Number(s.quantity), 0);
+        // ถ้ามี Suggestion ให้ใช้ยอดรวมจาก Suggestion (กรณีจอง Stock แบบระบุ Location)
+        if (item.picking_suggestions && item.picking_suggestions.length > 0) {
+            return item.picking_suggestions.reduce((sum, s) => sum + Number(s.quantity), 0);
+        }
+        // Fallback: ถ้าไม่มี Suggestion ให้ใช้ยอด Order หลัก (กรณี Backorder หรือไม่ได้เปิดระบบจอง Location)
+        return item.quantity || 0;
     };
 
     // --- 📡 BARCODE SCANNER LOGIC ---
@@ -100,10 +100,8 @@ export default function Process({ auth, pickingSlip, items }: Props) {
 
     useBarcodeScanner(handleScan);
 
-    // Manual Input Handler
     const handleQtyChange = (itemId: number, val: string, maxLimit: number) => {
         const num = parseFloat(val);
-        // Allow user to clear input (NaN -> 0), but don't exceed maxLimit
         const safeNum = isNaN(num) ? 0 : Math.min(num, maxLimit);
 
         setPickedData(prev => ({
@@ -112,7 +110,6 @@ export default function Process({ auth, pickingSlip, items }: Props) {
         }));
     };
 
-    // Auto Fill Button
     const handleAutoFill = (item: PickingItem, maxLimit: number) => {
         setPickedData(prev => ({
             ...prev,
@@ -121,7 +118,6 @@ export default function Process({ auth, pickingSlip, items }: Props) {
     };
 
     const handleSubmit = () => {
-        // Validation: Check if everything matches the reservation target
         const incompleteItems = items.filter(item => {
              const target = getTargetQty(item);
              const picked = pickedData[item.id] || 0;
@@ -143,7 +139,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                 id: parseInt(id),
                 qty_picked: qty
             })),
-            create_backorder: true // Default to true (Business Logic decision)
+            create_backorder: true
         };
 
         router.post(route('logistics.picking.confirm', pickingSlip.id), payload, {
@@ -215,16 +211,13 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                 <div className="grid gap-6">
                     {items.map((item) => {
                         const currentPicked = pickedData[item.id] || 0;
-
-                        // Calculated Target from Backend Suggestions
                         const targetQty = getTargetQty(item);
-
                         const isStockAvailable = targetQty > 0;
                         const isCompleted = currentPicked >= targetQty && isStockAvailable;
                         const isJustScanned = lastScanned?.name.includes(item.product_name) && lastScanned?.status === 'success';
 
-                        // Calculate Progress Percentage
-                        const progress = isStockAvailable ? Math.min((currentPicked / targetQty) * 100, 100) : 0;
+                        // Calculate Progress Percentage (Handle division by zero)
+                        const progress = targetQty > 0 ? Math.min((currentPicked / targetQty) * 100, 100) : 0;
 
                         return (
                             <Card
@@ -274,8 +267,9 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                         <ScanBarcode className="w-3 h-3 mr-1" />
                                                         {item.barcode || 'N/A'}
                                                     </Badge>
+                                                    {/* ✅ REFACTOR: ใช้ item.quantity ที่ถูกต้อง */}
                                                     <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                                                        Ordered: {item.qty_ordered}
+                                                        Ordered: {item.quantity}
                                                     </Badge>
                                                 </div>
 
@@ -299,7 +293,7 @@ export default function Process({ auth, pickingSlip, items }: Props) {
                                                         </div>
                                                     ) : (
                                                         <p className="text-sm text-red-500 flex items-center font-medium italic">
-                                                            <AlertCircle className="w-4 h-4 mr-1" /> Not Allocated / Out of Stock
+                                                            <AlertCircle className="w-4 h-4 mr-1" /> No specific location suggested
                                                         </p>
                                                     )}
                                                 </div>

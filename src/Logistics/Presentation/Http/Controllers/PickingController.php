@@ -104,7 +104,7 @@ class PickingController extends Controller
         // Fallback หา Warehouse UUID
         $warehouseUuid = $orderContext->warehouse_id ?? $pickingSlip->warehouse_id;
         if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
-             $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->company_id)->value('uuid');
+            $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->company_id)->value('uuid');
         }
 
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {
@@ -146,7 +146,8 @@ class PickingController extends Controller
                 'product_id' => $pickItem->product_id,
                 'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
                 'barcode' => $itemDto ? $itemDto->partNumber : '',
-                'qty_ordered' => $pickItem->quantity_requested,
+                'quantity' => $pickItem->quantity_requested,
+                'quantity_requested' => $pickItem->quantity_requested,
                 'qty_picked' => $pickItem->quantity_picked,
                 'is_completed' => $pickingSlip->status === 'done' || ($pickItem->quantity_picked >= $pickItem->quantity_requested),
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
@@ -191,7 +192,7 @@ class PickingController extends Controller
 
             $warehouseUuid = $orderContext->warehouse_id ?? $picking->warehouse_id;
             if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
-                 $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $picking->company_id)->value('uuid');
+                $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $picking->company_id)->value('uuid');
             }
 
             foreach ($picking->items as $item) {
@@ -219,18 +220,18 @@ class PickingController extends Controller
                 // 2. Release Unpicked Stock logic
                 $qtyUnpicked = $item->quantity_requested - $qtyPickedActual;
                 if ($qtyUnpicked > 0) {
-                      $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
-                      if ($inventoryItemDto && $warehouseUuid) {
+                    $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
+                    if ($inventoryItemDto && $warehouseUuid) {
                         $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItemDto->uuid, $warehouseUuid);
                         $releaseRemaining = $qtyUnpicked;
                         foreach ($reservedStocks as $stockLevel) {
-                             if ($releaseRemaining <= 0) break;
-                             $releaseAmt = min($releaseRemaining, $stockLevel->getQuantitySoftReserved());
-                             $stockLevel->releaseSoftReservation($releaseAmt);
-                             $this->stockRepo->save($stockLevel, []);
-                             $releaseRemaining -= $releaseAmt;
+                            if ($releaseRemaining <= 0) break;
+                            $releaseAmt = min($releaseRemaining, $stockLevel->getQuantitySoftReserved());
+                            $stockLevel->releaseSoftReservation($releaseAmt);
+                            $this->stockRepo->save($stockLevel, []);
+                            $releaseRemaining -= $releaseAmt;
                         }
-                      }
+                    }
                 }
 
                 $item->update(['quantity_picked' => $qtyPickedActual]);
@@ -325,7 +326,7 @@ class PickingController extends Controller
 
         $warehouseUuid = $orderContext->warehouse_id ?? 'Main-WH';
         if ($warehouseUuid === 'Main-WH' || !$warehouseUuid) {
-             $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $orderContext->company_id)->value('uuid');
+            $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $orderContext->company_id)->value('uuid');
         }
 
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {

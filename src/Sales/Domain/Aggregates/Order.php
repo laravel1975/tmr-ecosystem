@@ -212,8 +212,9 @@ class Order
     }
 
     /**
-     * Batch update shipment (ที่เสนอให้ Refactor ในรอบก่อน)
-     * ใส่ไว้เผื่ออนาคต หรือถ้าโค้ดอื่นเรียกใช้
+     * ✅ REFACTOR: Handle shipment update within Domain Boundary
+     * เมธอดนี้จะถูกเรียกเมื่อ Logistics ส่ง Event กลับมาว่ามีการจัดส่งเกิดขึ้น
+     * * @param array<string, int> $shippedItems Key=ItemId, Value=QuantityShipped
      */
     public function registerShipment(array $shippedQuantities): void
     {
@@ -222,15 +223,20 @@ class Order
         }
 
         foreach ($shippedQuantities as $itemId => $qtyToAdd) {
+            /** @var OrderItem|null $item */
             $item = $this->items->first(fn($i) => $i->id === $itemId);
-            if (!$item) continue;
 
+            if (!$item) {
+                continue;
+            }
+
+            // Invariant Check: ห้ามส่งเกินที่สั่ง
             $newTotalShipped = $item->qtyShipped + $qtyToAdd;
-            // Invariant check ในระดับ Aggregate
             if ($newTotalShipped > $item->quantity) {
                 throw new Exception("Cannot ship more than ordered quantity for item {$item->productName}");
             }
 
+            // Update state inside entity
             $item->updateShippedQty($newTotalShipped);
         }
 
