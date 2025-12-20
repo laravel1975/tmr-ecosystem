@@ -37,6 +37,10 @@ class InventoryServiceProvider extends ServiceProvider
             ItemLookupService::class
         );
 
+        $this->app->bind(
+            \TmrEcosystem\Inventory\Domain\Repositories\StockReservationRepositoryInterface::class,
+            \TmrEcosystem\Inventory\Infrastructure\Persistence\Eloquent\Repositories\EloquentStockReservationRepository::class
+        );
     }
 
     /**

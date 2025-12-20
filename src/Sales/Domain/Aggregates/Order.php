@@ -7,6 +7,7 @@ use Illuminate\Support\Str;
 use TmrEcosystem\Sales\Domain\Entities\OrderItem;
 use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
 use Exception;
+use TmrEcosystem\Shared\Domain\Enums\ReservationState;
 
 class Order
 {
@@ -22,6 +23,7 @@ class Order
     private float $totalAmount;
     private string $note = '';
     private string $paymentTerms = 'immediate';
+    private ReservationState $reservationStatus;
 
     // ✅ Constructor
     public function __construct(
@@ -40,20 +42,54 @@ class Order
         $this->items = collect([]);
         $this->totalAmount = 0;
         $this->orderNumber = 'DRAFT'; // ปกติควร Gen จาก Domain Service หรือ Repository
+        $this->reservationStatus = ReservationState::NONE;
     }
 
     // --- Getters ---
-    public function getId(): string { return $this->id; }
-    public function getCustomerId(): string { return $this->customerId; }
-    public function getCompanyId(): string { return $this->companyId; }
-    public function getWarehouseId(): string { return $this->warehouseId; }
-    public function getSalespersonId(): ?string { return $this->salespersonId; }
-    public function getStatus(): OrderStatus { return $this->status; }
-    public function getItems(): Collection { return $this->items; }
-    public function getTotalAmount(): float { return $this->totalAmount; }
-    public function getOrderNumber(): string { return $this->orderNumber; }
-    public function getNote(): string { return $this->note; }
-    public function getPaymentTerms(): string { return $this->paymentTerms; }
+    public function getId(): string
+    {
+        return $this->id;
+    }
+    public function getCustomerId(): string
+    {
+        return $this->customerId;
+    }
+    public function getCompanyId(): string
+    {
+        return $this->companyId;
+    }
+    public function getWarehouseId(): string
+    {
+        return $this->warehouseId;
+    }
+    public function getSalespersonId(): ?string
+    {
+        return $this->salespersonId;
+    }
+    public function getStatus(): OrderStatus
+    {
+        return $this->status;
+    }
+    public function getItems(): Collection
+    {
+        return $this->items;
+    }
+    public function getTotalAmount(): float
+    {
+        return $this->totalAmount;
+    }
+    public function getOrderNumber(): string
+    {
+        return $this->orderNumber;
+    }
+    public function getNote(): string
+    {
+        return $this->note;
+    }
+    public function getPaymentTerms(): string
+    {
+        return $this->paymentTerms;
+    }
 
     // --- Domain Methods ---
 
@@ -82,6 +118,32 @@ class Order
 
         $this->items->push($item);
         $this->recalculateTotal();
+    }
+
+    // Called when User creates a draft or adds items
+    public function requestReservation(): void
+    {
+        if ($this->reservationStatus === ReservationState::HARD_RESERVED) {
+            return; // Already secured
+        }
+        // State ใน Sales เป็นแค่ View, ของจริงอยู่ที่ Inventory
+        $this->reservationStatus = ReservationState::SOFT_RESERVED;
+    }
+
+    // Called via Event Listener when Inventory confirms Hard Reserve
+    public function confirmReservation(): void
+    {
+        $this->reservationStatus = ReservationState::HARD_RESERVED;
+    }
+
+    // Called via Event Listener when Inventory says "Expired"
+    public function markReservationExpired(): void
+    {
+        if ($this->status === OrderStatus::Confirmed) {
+            // Critical Business Rule: ถ้า Order Confirm แล้ว แต่ Reservation หลุด
+            // ต้องแจ้งเตือน Staff ด่วน (Overselling Risk)
+        }
+        $this->reservationStatus = ReservationState::EXPIRED;
     }
 
     /**

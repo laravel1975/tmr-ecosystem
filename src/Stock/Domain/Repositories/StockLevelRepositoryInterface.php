@@ -10,6 +10,17 @@ interface StockLevelRepositoryInterface
 {
     public function nextUuid(): string;
 
+    /**
+     * ค้นหา StockLevel สำหรับ Item ใน Warehouse
+     * กรณีมีหลาย Location อาจจะคืนค่า Location ที่เหมาะสมที่สุด (เช่น มี Soft Reserve ค้างอยู่)
+     */
+    public function findByItemAndWarehouse(string $itemUuid, string $warehouseUuid): ?StockLevel;
+
+    /**
+     * @return Collection<int, StockLevel>
+     */
+    public function findWithAvailableStock(string $itemUuid, string $warehouseUuid): Collection;
+
     public function findByLocation(string $itemUuid, string $locationUuid, string $companyId): ?StockLevel;
 
     public function save(StockLevel $stockLevel, array $movements): void;

@@ -4,8 +4,7 @@ namespace TmrEcosystem\Stock\Domain\Aggregates;
 
 use DateTimeImmutable;
 use Exception;
-use TmrEcosystem\Stock\Domain\Events\StockLevelUpdated;
-use TmrEcosystem\Stock\Domain\Events\StockReserved; // New Event
+use Illuminate\Support\Str;
 
 class StockLevel
 {
@@ -15,10 +14,7 @@ class StockLevel
     private string $locationId;
     private float $quantityOnHand;
     private float $quantitySoftReserved;
-    private float $quantityHardReserved; // ✅ เพิ่ม Hard Reserve แยกชัดเจน
-
-    // Tracking reservations to handle expiration (Simplified)
-    private array $softReservations = [];
+    private float $quantityHardReserved;
 
     public function __construct(
         string $id,
@@ -46,10 +42,10 @@ class StockLevel
     }
 
     /**
-     * Soft Reserve: จองชั่วคราว (เช่น รอชำระเงิน)
-     * มี TTL ถ้าเกินเวลาต้อง Release คืนได้ (ผ่าน Scheduled Job)
+     * ✅ Added: ใช้สำหรับ Flow 1 (Create Soft Reserve)
+     * เพิ่มยอดจองแบบ Soft (ตัดจาก Available)
      */
-    public function reserveSoft(float $amount, string $referenceId, ?DateTimeImmutable $expiresAt = null): void
+    public function increaseSoftReserve(float $amount): void
     {
         if ($amount <= 0) {
             throw new Exception("Reservation amount must be positive.");
@@ -60,44 +56,42 @@ class StockLevel
         }
 
         $this->quantitySoftReserved += $amount;
-
-        // ในระบบจริงควรเก็บ $softReservations ลง Table แยก (stock_reservations)
-        // เพื่อทำ TTL Cleanup แต่ใน Aggregate นี้เรา update state รวม
-
-        // Emit Event
-        // record(new StockReserved($this->id, $amount, 'SOFT', $referenceId));
     }
 
     /**
-     * Hard Reserve: ล็อคเพื่อ Picking (เปลี่ยนจาก Soft -> Hard)
-     * หรือจองตรงๆ สำหรับ Backorder ที่ของเข้าแล้ว
+     * ✅ Added: ใช้สำหรับ Flow 3 (Promote to Hard Reserve)
+     * ย้ายยอดจาก Soft -> Hard (ยอดคงเหลือรวมเท่าเดิม แต่สถานะเปลี่ยน)
      */
-    public function commitToHardReserve(float $amount): void
+    public function convertSoftToHard(float $amount): void
     {
-        // กรณี convert จาก Soft Reserve
-        if ($this->quantitySoftReserved >= $amount) {
-            $this->quantitySoftReserved -= $amount;
-            $this->quantityHardReserved += $amount;
+        if ($amount <= 0) {
+            throw new Exception("Amount must be positive.");
         }
-        // กรณีจองใหม่เลย (ต้องเช็ค Available)
-        elseif ($this->getAvailableQuantity() >= $amount) {
-            $this->quantityHardReserved += $amount;
-        } else {
-            throw new Exception("Cannot commit stock. Insufficient availability.");
+
+        // ตรวจสอบว่ามียอด Soft Reserve พอให้เปลี่ยนไหม
+        // (ใช้ epsilon สำหรับ float comparison เพื่อความปลอดภัย)
+        if (($this->quantitySoftReserved + 0.00001) < $amount) {
+             throw new Exception("Insufficient soft reserved stock to convert. Held: {$this->quantitySoftReserved}, Required: {$amount}");
         }
+
+        $this->quantitySoftReserved -= $amount;
+        $this->quantityHardReserved += $amount;
+
+        // ป้องกันเศษติดลบจาก floating point
+        if ($this->quantitySoftReserved < 0) $this->quantitySoftReserved = 0;
     }
 
     /**
-     * Issue Stock: ตัดของจริงเมื่อ Shipment
+     * ใช้สำหรับตัดของจริงออกจากคลัง (Shipment)
      */
     public function issueStock(float $amount): void
     {
-        // ตัดจาก Hard Reserve ก่อน (ปกติควรเป็น Flow นี้)
+        // ตัดจาก Hard Reserve ก่อน
         if ($this->quantityHardReserved >= $amount) {
             $this->quantityHardReserved -= $amount;
             $this->quantityOnHand -= $amount;
         }
-        // Fallback ตัดจาก Available (ถ้าไม่มี Hard Reserve)
+        // Fallback ตัดจาก Available (กรณีด่วนไม่ได้จอง)
         elseif ($this->getAvailableQuantity() >= $amount) {
             $this->quantityOnHand -= $amount;
         } else {
@@ -110,22 +104,25 @@ class StockLevel
     }
 
     /**
-     * Release: ปล่อยของคืน (Cancel Order / Expired)
+     * ใช้สำหรับ Release Stock คืน (Order Cancel / Expired)
      */
     public function releaseSoftReservation(float $amount): void
     {
         $this->quantitySoftReserved = max(0, $this->quantitySoftReserved - $amount);
     }
 
-    // ... Getters / Factory Methods ...
+    // --- Getters ---
 
     public function getId(): string { return $this->id; }
+    public function getInventoryItemId(): string { return $this->inventoryItemId; }
+    public function getWarehouseId(): string { return $this->warehouseId; }
+    public function getLocationUuid(): string { return $this->locationId; }
     public function getQuantityOnHand(): float { return $this->quantityOnHand; }
     public function getQuantitySoftReserved(): float { return $this->quantitySoftReserved; }
     public function getQuantityHardReserved(): float { return $this->quantityHardReserved; }
-    public function getLocationUuid(): string { return $this->locationId; }
 
-    // Reconstitute from DB state
+    // --- Reconstitute ---
+
     public static function fromStorage(object $data): self
     {
         return new self(
@@ -135,7 +132,7 @@ class StockLevel
             $data->location_uuid,
             (float) $data->quantity_on_hand,
             (float) ($data->quantity_soft_reserved ?? 0),
-            (float) ($data->quantity_hard_reserved ?? 0) // New column
+            (float) ($data->quantity_hard_reserved ?? 0)
         );
     }
 }

@@ -210,4 +210,44 @@ class EloquentStockLevelRepository implements StockLevelRepositoryInterface
             ->where('company_id', $companyId)
             ->sum('quantity_on_hand');
     }
+
+    /**
+     * ✅ Added Method
+     */
+    public function findByItemAndWarehouse(string $itemUuid, string $warehouseUuid): ?StockLevel
+    {
+        // Strategy:
+        // 1. หาที่มี Soft Reserve อยู่แล้วก่อน (เพื่อ Promote จากก้อนเดิม)
+        // 2. ถ้าไม่มี ให้หาอันที่มีของ (Available > 0)
+        // 3. ถ้าไม่มีอีก ให้เอาอันแรกที่เจอ (เพื่อสร้าง Backorder หรือ Error msg)
+
+        $query = StockLevelModel::where('item_uuid', $itemUuid)
+            ->where('warehouse_uuid', $warehouseUuid);
+
+        // Try getting the one holding soft reserve first
+        $model = (clone $query)->where('quantity_soft_reserved', '>', 0)->first();
+
+        if (!$model) {
+            // Fallback to any stock level
+            $model = $query->first();
+        }
+
+        return $model ? $this->toDomain($model) : null;
+    }
+
+    public function findWithAvailableStock(string $itemUuid, string $warehouseUuid): Collection
+    {
+        return StockLevelModel::where('item_uuid', $itemUuid)
+            ->where('warehouse_uuid', $warehouseUuid)
+            ->where('quantity_on_hand', '>', 0)
+            ->get()
+            ->map(fn($model) => $this->toDomain($model));
+    }
+
+    private function toDomain(StockLevelModel $model): StockLevel
+    {
+        // ต้องมั่นใจว่าเรียก Constructor ของ Aggregate ถูกต้อง (อาจต้องปรับชื่อตัวแปรตามไฟล์ Aggregate)
+        // สมมติว่า Aggregate Constructor คือ: new StockLevel($id, $itemId, $warehouseId, $locationId, $onHand, $soft, $hard)
+        return StockLevel::fromStorage($model);
+    }
 }
