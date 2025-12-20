@@ -5,8 +5,6 @@ namespace TmrEcosystem\Logistics\Infrastructure\Persistence\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use TmrEcosystem\IAM\Domain\Models\User;
-// Import Model ข้าม Module (Sales)
-use TmrEcosystem\Sales\Infrastructure\Persistence\Models\SalesOrderModel;
 
 class PickingSlip extends Model
 {
@@ -21,17 +19,24 @@ class PickingSlip extends Model
     ];
 
     /**
-     * ความสัมพันธ์กลับไปหา Sales Order
+     * ✅ REFACTOR: Instead of a hard relationship, we treat order_id as a plain reference.
+     * If you strictly need data from Sales, fetch it via a separate Query Service or Read Model.
+     * * But if you absolutely need the relationship for Inertia views (lazy loading),
+     * define it in a specific "Read Model" class, not this Write Model.
      */
-    public function order()
-    {
-        return $this->belongsTo(SalesOrderModel::class, 'order_id');
-    }
+    // public function order()
+    // {
+    //     return $this->belongsTo(SalesOrderModel::class, 'order_id');
+    // }
 
     /**
-     * (Optional) ความสัมพันธ์กับคนหยิบของ (User)
-     * ใช้ App\Models\User หรือ IAM Module ตามที่คุณมี
+     * Helper to get the reference ID explicitly
      */
+    public function getOrderId(): string
+    {
+        return $this->order_id;
+    }
+
     public function picker()
     {
         return $this->belongsTo(User::class, 'picker_user_id');

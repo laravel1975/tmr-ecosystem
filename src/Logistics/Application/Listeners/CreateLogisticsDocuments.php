@@ -5,9 +5,9 @@ namespace TmrEcosystem\Logistics\Application\Listeners;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache; // ✅ Use Cache for Idempotency
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
 use TmrEcosystem\Logistics\Domain\Services\OrderFulfillmentService;
-use TmrEcosystem\Logistics\Infrastructure\Persistence\Models\PickingSlip;
 use Exception;
 
 class CreateLogisticsDocuments implements ShouldQueue
@@ -23,31 +23,36 @@ class CreateLogisticsDocuments implements ShouldQueue
 
     public function handle(OrderConfirmed $event): void
     {
-        // 1. [Safety Check] ตรวจสอบว่า Event มีข้อมูล Snapshot มาหรือไม่
-        // (เผื่อกรณีช่วงเปลี่ยนผ่านที่ Event เก่ายังค้างใน Queue)
         if (!isset($event->orderSnapshot)) {
-            Log::warning("Logistics: Received OrderConfirmed without Snapshot. Falling back to legacy mode (if supported) or skipping.");
-            // ในที่นี้ถ้าไม่มี Snapshot เราอาจจะ Fail หรือใช้ Logic เดิม (Legacy) ก็ได้
+            Log::warning("Logistics: Received OrderConfirmed without Snapshot. Skipping.");
             return;
         }
 
         $snapshot = $event->orderSnapshot;
         $orderId = $snapshot->orderId;
 
-        // 2. [Idempotency Check] (Logic จาก Day 2)
-        if (PickingSlip::where('order_id', $orderId)->exists()) {
-            Log::info("Logistics: [Idempotency] Picking Slip for Order {$orderId} already exists. Skipping.");
+        // ✅ REFACTOR: Use Cache Atomicity for Idempotency
+        // This decouples the listener from the specific Database table 'picking_slips'
+        // and is faster/safer for race conditions in queue workers.
+        $lockKey = "logistics:processing_order:{$orderId}";
+
+        // Lock for 10 seconds to prevent double processing
+        if (!Cache::add($lockKey, true, 10)) {
+            Log::info("Logistics: Order {$orderId} is currently being processed. Skipping.");
             return;
         }
 
         try {
+            // Optional: Secondary check using Domain Service (Does this order already have a picking slip?)
+            // if ($this->fulfillmentService->hasPickingSlip($orderId)) { ... }
+
             Log::info("Logistics: Processing Order {$snapshot->orderNumber} via Event Snapshot.");
 
-            // 3. [Day 5] เรียก Service แบบใหม่ที่รับ DTO
             $this->fulfillmentService->fulfillOrderFromSnapshot($snapshot);
 
         } catch (Exception $e) {
             Log::error("Logistics: Failed to fulfill Order {$orderId}. Error: " . $e->getMessage());
+            Cache::forget($lockKey); // Release lock on failure so it can retry
             throw $e;
         }
     }
