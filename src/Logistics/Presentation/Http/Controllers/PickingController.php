@@ -26,9 +26,8 @@ class PickingController extends Controller
 
     public function index(Request $request)
     {
-        // ✅ REFACTOR: ใช้ Join เพื่อดึงข้อมูล Read Model และลบ with(['order']) ออก
         $query = PickingSlip::query()
-            ->withSum('items as total_items_to_pick', 'quantity_requested') // นับจำนวนจาก Picking Slip Items โดยตรง
+            ->withSum('items as total_items_to_pick', 'quantity_requested')
             ->join('sales_orders', 'logistics_picking_slips.order_id', '=', 'sales_orders.id')
             ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
             ->leftJoin('users', 'logistics_picking_slips.picker_user_id', '=', 'users.id')
@@ -59,9 +58,9 @@ class PickingController extends Controller
             ->through(fn($slip) => [
                 'id' => $slip->id,
                 'picking_number' => $slip->picking_number,
-                'order_number' => $slip->order_number, // ใช้ค่าจาก select
+                'order_number' => $slip->order_number,
                 'customer_name' => $slip->customer_name ?? 'Unknown',
-                'items_count' => $slip->total_items_to_pick ?? 0, // ใช้ค่าจาก withSum
+                'items_count' => $slip->total_items_to_pick ?? 0,
                 'status' => $slip->status,
                 'created_at' => $slip->created_at->format('d/m/Y H:i'),
                 'picker_name' => $slip->picker_name,
@@ -84,10 +83,8 @@ class PickingController extends Controller
 
     public function show(string $id)
     {
-        // ✅ REFACTOR: ลบ 'order.customer' ออกจาก with
         $pickingSlip = PickingSlip::with(['items'])->findOrFail($id);
 
-        // ดึงข้อมูล Context Sales แบบ Read-Only ผ่าน DB Facade (ไม่ใช้ Model เพื่อลด Coupling)
         $orderContext = DB::table('sales_orders')
             ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
             ->where('sales_orders.id', $pickingSlip->order_id)
@@ -101,10 +98,9 @@ class PickingController extends Controller
             )
             ->first();
 
-        // Fallback หา Warehouse UUID
         $warehouseUuid = $orderContext->warehouse_id ?? $pickingSlip->warehouse_id;
         if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
-            $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->company_id)->value('uuid');
+             $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $pickingSlip->company_id)->value('uuid');
         }
 
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {
@@ -146,8 +142,8 @@ class PickingController extends Controller
                 'product_id' => $pickItem->product_id,
                 'product_name' => $itemDto ? $itemDto->name : $pickItem->product_id,
                 'barcode' => $itemDto ? $itemDto->partNumber : '',
-                'quantity' => $pickItem->quantity_requested,
-                'quantity_requested' => $pickItem->quantity_requested,
+                'quantity' => $pickItem->quantity_requested, // ✅ Align with frontend
+                'qty_ordered' => $pickItem->quantity_requested, // Keep for backward compatibility
                 'qty_picked' => $pickItem->quantity_picked,
                 'is_completed' => $pickingSlip->status === 'done' || ($pickItem->quantity_picked >= $pickItem->quantity_requested),
                 'image_url' => $itemDto ? $itemDto->imageUrl : null,
@@ -187,12 +183,20 @@ class PickingController extends Controller
             $submittedItems = collect($request->items);
             $backorderItems = [];
 
-            // Helper to get Order Context quickly
-            $orderContext = DB::table('sales_orders')->select('warehouse_id', 'shipping_address')->where('id', $picking->order_id)->first();
+            // ✅ FIX: Join Customers table to get address (sales_orders has no shipping_address column)
+            $orderContext = DB::table('sales_orders')
+                ->leftJoin('customers', 'sales_orders.customer_id', '=', 'customers.id')
+                ->select(
+                    'sales_orders.warehouse_id',
+                    'sales_orders.company_id',
+                    'customers.address as shipping_address' // Alias for clarity
+                )
+                ->where('sales_orders.id', $picking->order_id)
+                ->first();
 
             $warehouseUuid = $orderContext->warehouse_id ?? $picking->warehouse_id;
             if (!$warehouseUuid || $warehouseUuid === 'Main-WH') {
-                $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $picking->company_id)->value('uuid');
+                 $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $picking->company_id)->value('uuid');
             }
 
             foreach ($picking->items as $item) {
@@ -220,18 +224,18 @@ class PickingController extends Controller
                 // 2. Release Unpicked Stock logic
                 $qtyUnpicked = $item->quantity_requested - $qtyPickedActual;
                 if ($qtyUnpicked > 0) {
-                    $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
-                    if ($inventoryItemDto && $warehouseUuid) {
+                      $inventoryItemDto = $this->itemLookupService->findByPartNumber($item->product_id);
+                      if ($inventoryItemDto && $warehouseUuid) {
                         $reservedStocks = $this->stockRepo->findWithSoftReserve($inventoryItemDto->uuid, $warehouseUuid);
                         $releaseRemaining = $qtyUnpicked;
                         foreach ($reservedStocks as $stockLevel) {
-                            if ($releaseRemaining <= 0) break;
-                            $releaseAmt = min($releaseRemaining, $stockLevel->getQuantitySoftReserved());
-                            $stockLevel->releaseSoftReservation($releaseAmt);
-                            $this->stockRepo->save($stockLevel, []);
-                            $releaseRemaining -= $releaseAmt;
+                             if ($releaseRemaining <= 0) break;
+                             $releaseAmt = min($releaseRemaining, $stockLevel->getQuantitySoftReserved());
+                             $stockLevel->releaseSoftReservation($releaseAmt);
+                             $this->stockRepo->save($stockLevel, []);
+                             $releaseRemaining -= $releaseAmt;
                         }
-                    }
+                      }
                 }
 
                 $item->update(['quantity_picked' => $qtyPickedActual]);
@@ -315,7 +319,6 @@ class PickingController extends Controller
 
     public function reViewItem(string $id)
     {
-        // View-only method logic updated
         $pickingSlip = PickingSlip::with(['items', 'picker'])->findOrFail($id);
 
         $orderContext = DB::table('sales_orders')
@@ -326,7 +329,7 @@ class PickingController extends Controller
 
         $warehouseUuid = $orderContext->warehouse_id ?? 'Main-WH';
         if ($warehouseUuid === 'Main-WH' || !$warehouseUuid) {
-            $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $orderContext->company_id)->value('uuid');
+             $warehouseUuid = \TmrEcosystem\Warehouse\Infrastructure\Persistence\Eloquent\Models\WarehouseModel::where('company_id', $orderContext->company_id)->value('uuid');
         }
 
         $items = $pickingSlip->items->map(function ($pickItem) use ($pickingSlip, $warehouseUuid) {
@@ -338,6 +341,7 @@ class PickingController extends Controller
                 'description' => $itemDto->description ?? '',
                 'barcode' => $itemDto ? $itemDto->partNumber : '',
                 'location' => 'CHECK APP',
+                'quantity' => $pickItem->quantity_requested, // ✅ Added for frontend consistency
                 'qty_ordered' => $pickItem->quantity_requested,
                 'qty_picked' => $pickItem->quantity_picked,
                 'is_completed' => false,
