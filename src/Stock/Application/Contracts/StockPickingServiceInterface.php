@@ -11,4 +11,8 @@ interface StockPickingServiceInterface
      * @return array
      */
     public function planPicking(string $warehouseId, array $items): array;
+
+    public function suggestPickingLocations(string $productId, float $quantity, string $warehouseId): array;
+    // Returns array of DTOs like StockPickingSuggestionDto(locationId, quantity)
+
 }

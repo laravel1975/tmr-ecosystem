@@ -14,6 +14,7 @@ class OrderSnapshotDto
         public string $companyId,
         public string $warehouseId,
         public array $items,
+        public array $customerSnapshot,
         public ?string $note = null
     ) {}
 }

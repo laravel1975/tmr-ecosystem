@@ -8,7 +8,10 @@ class CustomerServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        $this->app->bind(
+            \TmrEcosystem\Sales\Application\Contracts\CustomerLookupInterface::class,
+            \TmrEcosystem\Customers\Infrastructure\Services\SalesCustomerLookupService::class
+        );
     }
 
     public function boot(): void

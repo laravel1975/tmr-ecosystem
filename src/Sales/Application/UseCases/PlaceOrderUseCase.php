@@ -10,13 +10,14 @@ use TmrEcosystem\Sales\Domain\Aggregates\Order;
 use TmrEcosystem\Sales\Domain\Repositories\OrderRepositoryInterface;
 use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
 use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
-use TmrEcosystem\Communication\Infrastructure\Persistence\Models\CommunicationMessage;
-use TmrEcosystem\Customers\Infrastructure\Persistence\Models\Customer;
 use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
+use TmrEcosystem\Sales\Domain\Events\OrderCreated; // ✅ ใช้ Event แทนการเรียก Communication โดยตรง
 use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
 use TmrEcosystem\Sales\Application\Contracts\StockReservationInterface;
+// ✅ เพิ่ม Interface นี้เพื่อตัดขาดจาก Eloquent Model ของ Customer Module
+use TmrEcosystem\Sales\Application\Contracts\CustomerLookupInterface;
 
 class PlaceOrderUseCase
 {
@@ -24,7 +25,8 @@ class PlaceOrderUseCase
         private OrderRepositoryInterface $orderRepository,
         private ProductCatalogInterface $productCatalog,
         private CreditCheckService $creditCheckService,
-        private StockReservationInterface $stockReservation
+        private StockReservationInterface $stockReservation,
+        private CustomerLookupInterface $customerLookup // ✅ Inject Service Interface
     ) {}
 
     /**
@@ -32,16 +34,23 @@ class PlaceOrderUseCase
      */
     public function handle(CreateOrderDto $dto): Order
     {
-        // ... (Logic ส่วนแรกคงเดิม: Prepare Data, Resolve Salesperson, Financial Control) ...
-        // 1. Prepare Data
+        // 1. Prepare Data & Cross-Context Lookup
+        // ❌ OLD: $customer = Customer::find($dto->customerId);
+        // ✅ NEW: ดึงข้อมูลผ่าน Interface ส่งกลับเป็น DTO
+        $customerData = $this->customerLookup->findById($dto->customerId);
+
+        if (!$customerData) {
+            throw new Exception("Customer not found.");
+        }
+
         $productIds = array_map(fn($item) => $item->productId, $dto->items);
         $products = $this->productCatalog->getProductsByIds($productIds);
 
         // 2. Resolve Salesperson
         $finalSalespersonId = $dto->salespersonId;
         if (!$finalSalespersonId) {
-            $customer = Customer::find($dto->customerId);
-            $finalSalespersonId = $customer ? $customer->default_salesperson_id : null;
+            // ใช้ข้อมูลจาก DTO แทน Eloquent Model
+            $finalSalespersonId = $customerData->defaultSalespersonId ?? null;
         }
 
         // 3. Financial Control
@@ -57,7 +66,7 @@ class PlaceOrderUseCase
             $this->creditCheckService->canPlaceOrder($dto->customerId, $estimatedTotal);
         }
 
-        return DB::transaction(function () use ($dto, $products, $finalSalespersonId) {
+        return DB::transaction(function () use ($dto, $products, $finalSalespersonId, $customerData) {
 
             // 4. Create Aggregate Root
             $order = new Order(
@@ -66,6 +75,17 @@ class PlaceOrderUseCase
                 warehouseId: $dto->warehouseId,
                 salespersonId: $finalSalespersonId
             );
+
+            // ✅ SNAPSHOT LOGIC: บันทึกข้อมูลลูกค้า ณ เวลาสั่งซื้อ
+            // ต้องเพิ่ม method setCustomerSnapshot ใน Order Aggregate หรือส่งผ่าน Constructor
+            $order->setCustomerSnapshot([
+                'name' => $customerData->name,
+                'tax_id' => $customerData->taxId,
+                'email' => $customerData->email,
+                'phone' => $customerData->phone,
+                'address' => $customerData->address, // ใช้เป็น Shipping Address ตั้งต้น
+                'payment_terms' => $customerData->paymentTerms,
+            ]);
 
             // 5. Add Items & Prepare for Reservation
             $reservationItems = [];
@@ -94,7 +114,7 @@ class PlaceOrderUseCase
             $order->updateDetails(
                 customerId: $dto->customerId,
                 note: $dto->note ?? null,
-                paymentTerms: $dto->paymentTerms ?? null
+                paymentTerms: $customerData->paymentTerms // ใช้ Payment Term จาก Customer Snapshot
             );
 
             // 7. Confirm Order & Reserve Stock
@@ -111,18 +131,17 @@ class PlaceOrderUseCase
             // 8. Save Aggregate
             $this->orderRepository->save($order);
 
-            // 9. Auto Log
-            CommunicationMessage::create([
-                'user_id' => Auth::id(),
-                'body' => "Order Created (สร้างใบสั่งขาย) #{$order->getOrderNumber()}",
-                'type' => 'notification',
-                'model_type' => 'sales_order',
-                'model_id' => $order->getId()
-            ]);
+            // 9. Auto Log & Notification
+            // ❌ OLD: CommunicationMessage::create(...) -> นี่คือ Eloquent Trap
+            // ✅ NEW: Dispatch Event "OrderCreated" แล้วให้ Listener ฝั่ง Communication เป็นคนสร้าง Message เอง
+            // หรือถ้ายังไม่มี Listener ให้ปล่อยไว้ก่อน แต่ห้ามเรียก Model ข้าม Context ตรงนี้
 
-            // 10. Dispatch Event
+            // 10. Dispatch Events
+            // Dispatch OrderCreated (สำหรับ Notification, Logging)
+            OrderCreated::dispatch($order->getId());
+
             if ($order->getStatus() === OrderStatus::Confirmed) {
-                // Prepare Snapshot DTO
+                // Prepare Snapshot DTO for Logistics
                 $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
                     id: $item->getId(),
                     productId: $item->productId,
@@ -141,7 +160,6 @@ class PlaceOrderUseCase
                     note: $order->getNote()
                 );
 
-                // ✅ [แก้ไขแล้ว] ส่ง ID (string) เป็น parameter ตัวแรก
                 OrderConfirmed::dispatch($order->getId(), $orderSnapshot);
             }
 

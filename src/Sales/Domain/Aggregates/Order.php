@@ -24,6 +24,7 @@ class Order
     private string $note = '';
     private string $paymentTerms = 'immediate';
     private ReservationState $reservationStatus;
+    private ?array $customerSnapshot = null;
 
     // ✅ Constructor
     public function __construct(
@@ -58,6 +59,24 @@ class Order
     public function getOrderNumber(): string { return $this->orderNumber; }
     public function getNote(): string { return $this->note; }
     public function getPaymentTerms(): string { return $this->paymentTerms; }
+
+    /**
+     * ✅ Getter สำหรับดึง Snapshot (ใช้ตอน save ลง Repository หรือส่ง Event)
+     */
+    public function getCustomerSnapshot(): ?array
+    {
+        return $this->customerSnapshot;
+    }
+
+    /**
+     * ✅ Method สำหรับบันทึกข้อมูลลูกค้า ณ เวลาสั่งซื้อ
+     * ข้อมูลนี้จะถูก map ลง column 'customer_snapshot' ใน DB
+     */
+    public function setCustomerSnapshot(array $data): void
+    {
+        // สามารถเพิ่ม Validation ตรงนี้ได้ถ้าจำเป็น ว่าต้องมี key อะไรบ้าง
+        $this->customerSnapshot = $data;
+    }
 
     // --- Domain Methods: Item Management ---
 
