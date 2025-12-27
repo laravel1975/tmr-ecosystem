@@ -11,10 +11,9 @@ class OrderConfirmed
     use Dispatchable, SerializesModels;
 
     public function __construct(
-        // เรายังเก็บ orderId ไว้แบบ Public Property เพื่อ Backward Compatibility (เผื่อ Consumer เก่ายังใช้)
         public string $orderId,
 
-        // [New] ข้อมูล Snapshot สำหรับ Logistics (Rich Payload)
-        public OrderSnapshotDto $orderSnapshot
+        // ✅ [Fix] ทำให้เป็น Nullable และ Default null เพื่อแก้ Error "Expected 2 arguments. Found 1."
+        public ?OrderSnapshotDto $orderSnapshot = null
     ) {}
 }

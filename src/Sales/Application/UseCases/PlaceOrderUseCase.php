@@ -12,11 +12,10 @@ use TmrEcosystem\Sales\Domain\Services\ProductCatalogInterface;
 use TmrEcosystem\Sales\Domain\ValueObjects\OrderStatus;
 use TmrEcosystem\Sales\Domain\Services\CreditCheckService;
 use TmrEcosystem\Sales\Domain\Events\OrderConfirmed;
-use TmrEcosystem\Sales\Domain\Events\OrderCreated; // ✅ ใช้ Event แทนการเรียก Communication โดยตรง
+use TmrEcosystem\Sales\Domain\Events\OrderCreated; // อย่าลืม Use ตัวนี้
 use TmrEcosystem\Sales\Application\DTOs\OrderSnapshotDto;
 use TmrEcosystem\Sales\Application\DTOs\OrderItemSnapshotDto;
 use TmrEcosystem\Sales\Application\Contracts\StockReservationInterface;
-// ✅ เพิ่ม Interface นี้เพื่อตัดขาดจาก Eloquent Model ของ Customer Module
 use TmrEcosystem\Sales\Application\Contracts\CustomerLookupInterface;
 
 class PlaceOrderUseCase
@@ -26,7 +25,7 @@ class PlaceOrderUseCase
         private ProductCatalogInterface $productCatalog,
         private CreditCheckService $creditCheckService,
         private StockReservationInterface $stockReservation,
-        private CustomerLookupInterface $customerLookup // ✅ Inject Service Interface
+        private CustomerLookupInterface $customerLookup
     ) {}
 
     /**
@@ -35,8 +34,6 @@ class PlaceOrderUseCase
     public function handle(CreateOrderDto $dto): Order
     {
         // 1. Prepare Data & Cross-Context Lookup
-        // ❌ OLD: $customer = Customer::find($dto->customerId);
-        // ✅ NEW: ดึงข้อมูลผ่าน Interface ส่งกลับเป็น DTO
         $customerData = $this->customerLookup->findById($dto->customerId);
 
         if (!$customerData) {
@@ -49,7 +46,6 @@ class PlaceOrderUseCase
         // 2. Resolve Salesperson
         $finalSalespersonId = $dto->salespersonId;
         if (!$finalSalespersonId) {
-            // ใช้ข้อมูลจาก DTO แทน Eloquent Model
             $finalSalespersonId = $customerData->defaultSalespersonId ?? null;
         }
 
@@ -76,18 +72,18 @@ class PlaceOrderUseCase
                 salespersonId: $finalSalespersonId
             );
 
-            // ✅ SNAPSHOT LOGIC: บันทึกข้อมูลลูกค้า ณ เวลาสั่งซื้อ
-            // ต้องเพิ่ม method setCustomerSnapshot ใน Order Aggregate หรือส่งผ่าน Constructor
+            // 5. Snapshot Logic (Set to Entity)
             $order->setCustomerSnapshot([
                 'name' => $customerData->name,
                 'tax_id' => $customerData->taxId,
                 'email' => $customerData->email,
                 'phone' => $customerData->phone,
-                'address' => $customerData->address, // ใช้เป็น Shipping Address ตั้งต้น
+                'address' => $customerData->address,
+                'shipping_address' => $customerData->shippingAddress,
                 'payment_terms' => $customerData->paymentTerms,
             ]);
 
-            // 5. Add Items & Prepare for Reservation
+            // 6. Add Items
             $reservationItems = [];
 
             foreach ($dto->items as $itemDto) {
@@ -110,14 +106,14 @@ class PlaceOrderUseCase
                 ];
             }
 
-            // 6. Update Details
+            // 7. Update Details
             $order->updateDetails(
                 customerId: $dto->customerId,
                 note: $dto->note ?? null,
-                paymentTerms: $customerData->paymentTerms // ใช้ Payment Term จาก Customer Snapshot
+                paymentTerms: $customerData->paymentTerms
             );
 
-            // 7. Confirm Order & Reserve Stock
+            // 8. Confirm Order & Reserve Stock
             if ($dto->confirmOrder) {
                 $this->stockReservation->reserveItems(
                     orderId: $order->getId(),
@@ -128,38 +124,35 @@ class PlaceOrderUseCase
                 $order->confirm();
             }
 
-            // 8. Save Aggregate
+            // 9. Save Aggregate
             $this->orderRepository->save($order);
 
-            // 9. Auto Log & Notification
-            // ❌ OLD: CommunicationMessage::create(...) -> นี่คือ Eloquent Trap
-            // ✅ NEW: Dispatch Event "OrderCreated" แล้วให้ Listener ฝั่ง Communication เป็นคนสร้าง Message เอง
-            // หรือถ้ายังไม่มี Listener ให้ปล่อยไว้ก่อน แต่ห้ามเรียก Model ข้าม Context ตรงนี้
+            // ✅ PREPARE SNAPSHOT DTO HERE (สร้างครั้งเดียวใช้ได้ทั้ง OrderCreated และ OrderConfirmed)
+            $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
+                id: $item->getId(),
+                productId: $item->productId,
+                productName: $item->productName,
+                quantity: $item->quantity,
+                unitPrice: $item->unitPrice
+            ))->toArray();
+
+            $orderSnapshot = new OrderSnapshotDto(
+                orderId: $order->getId(),
+                orderNumber: $order->getOrderNumber(),
+                customerId: $order->getCustomerId(),
+                companyId: $order->getCompanyId(),
+                warehouseId: $order->getWarehouseId(),
+                items: $itemsSnapshot,
+                note: $order->getNote(),
+                customerSnapshot: $order->getCustomerSnapshot() // ใส่ข้อมูล Customer Snapshot ด้วย
+            );
 
             // 10. Dispatch Events
-            // Dispatch OrderCreated (สำหรับ Notification, Logging)
-            OrderCreated::dispatch($order->getId());
+            // ✅ [Fix] ส่ง 2 argument: ID และ Snapshot DTO
+            event(new OrderCreated($order->getId(), $orderSnapshot));
 
             if ($order->getStatus() === OrderStatus::Confirmed) {
-                // Prepare Snapshot DTO for Logistics
-                $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
-                    id: $item->getId(),
-                    productId: $item->productId,
-                    productName: $item->productName,
-                    quantity: $item->quantity,
-                    unitPrice: $item->unitPrice
-                ))->toArray();
-
-                $orderSnapshot = new OrderSnapshotDto(
-                    orderId: $order->getId(),
-                    orderNumber: $order->getOrderNumber(),
-                    customerId: $order->getCustomerId(),
-                    companyId: $order->getCompanyId(),
-                    warehouseId: $order->getWarehouseId(),
-                    items: $itemsSnapshot,
-                    note: $order->getNote()
-                );
-
+                // ✅ ใช้ตัวแปร $orderSnapshot ตัวเดิมที่สร้างไว้ด้านบน
                 OrderConfirmed::dispatch($order->getId(), $orderSnapshot);
             }
 
