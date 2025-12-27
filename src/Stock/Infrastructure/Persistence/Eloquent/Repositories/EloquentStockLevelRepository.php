@@ -51,11 +51,12 @@ class EloquentStockLevelRepository implements StockLevelRepositoryInterface
             // 1. แปลง Aggregate กลับเป็น Model Data
             $levelData = StockLevelMapper::toPersistence($stockLevel);
 
-            // 2. บันทึก Stock Level (Update หรือ Create)
-            $this->model->newQuery()->updateOrCreate(
-                ['uuid' => $stockLevel->uuid()],
-                $levelData
-            );
+            // ✅ [Fix] ใช้ getId() แทน uuid() หรือใช้ key จาก array ที่ map มาแล้ว
+        // ตรวจสอบว่าใน Mapper คืนค่า key 'uuid' มาให้ถูกต้องหรือไม่
+        StockLevelModel::updateOrCreate(
+            ['uuid' => $stockLevel->getId()], // แก้จาก $stockLevel->uuid() เป็น getId()
+            $levelData
+        );
 
             // 3. บันทึก Movements (Audit Log)
             foreach ($movements as $movement) {

@@ -104,6 +104,15 @@ class StockLevel
     }
 
     /**
+     * ✅ [Fix] เพิ่ม Method นี้เพื่อให้ ShipmentController เรียกใช้งานได้
+     * ตัดสต็อกสำหรับการจัดส่ง (Shipment) โดยเรียกใช้ Logic เดียวกับ issueStock
+     */
+    public function shipReserved(float $amount): void
+    {
+        $this->issueStock($amount);
+    }
+
+    /**
      * ใช้สำหรับ Release Stock คืน (Order Cancel / Expired)
      */
     public function releaseSoftReservation(float $amount): void
