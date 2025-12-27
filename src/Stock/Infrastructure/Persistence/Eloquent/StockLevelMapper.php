@@ -11,36 +11,38 @@ class StockLevelMapper
 {
     public static function toDomain(StockLevelModel $model): StockLevelAggregate
     {
+        // ✅ [Fix] ปรับ Parameter ให้ตรงกับ __construct ของ StockLevel Aggregate
         return new StockLevelAggregate(
-            dbId: $model->id,
-            uuid: $model->uuid,
-            companyId: $model->company_id,
-            itemUuid: $model->item_uuid,
-            warehouseUuid: $model->warehouse_uuid,
-            locationUuid: $model->location_uuid,
+            id: $model->uuid, // ใช้ UUID เป็น Domain ID
+            inventoryItemId: $model->item_uuid,
+            warehouseId: $model->warehouse_uuid,
+            locationId: $model->location_uuid,
             quantityOnHand: (float) $model->quantity_on_hand,
-            quantityReserved: (float) $model->quantity_reserved,
-            quantitySoftReserved: (float) ($model->quantity_soft_reserved ?? 0) // ✅ เพิ่ม Mapping
+            quantitySoftReserved: (float) ($model->quantity_soft_reserved ?? 0),
+            quantityHardReserved: (float) ($model->quantity_hard_reserved ?? 0) // ใช้ hard_reserved แทน reserved
         );
     }
 
     public static function toPersistence(StockLevelAggregate $stockLevel): array
     {
+        // ✅ [Fix] ใช้ Getter ที่มีอยู่จริงใน StockLevel Aggregate
         return [
-            'uuid' => $stockLevel->uuid(),
-            'company_id' => $stockLevel->companyId(),
-            'item_uuid' => $stockLevel->itemUuid(),
-            'warehouse_uuid' => $stockLevel->warehouseUuid(),
-            'location_uuid' => $stockLevel->locationUuid(),
+            'uuid' => $stockLevel->getId(),
+            // 'company_id' => $stockLevel->getCompanyId(), // ตัดออกเพราะใน Aggregate ไม่มี field นี้
+            'item_uuid' => $stockLevel->getInventoryItemId(),
+            'warehouse_uuid' => $stockLevel->getWarehouseId(),
+            'location_uuid' => $stockLevel->getLocationUuid(),
             'quantity_on_hand' => $stockLevel->getQuantityOnHand(),
-            'quantity_reserved' => $stockLevel->getQuantityReserved(),
-            'quantity_soft_reserved' => $stockLevel->getQuantitySoftReserved(), // ✅ เพิ่ม Mapping
+            // Map ค่า Reserved กลับไปลง DB (สมมติว่า DB ใช้ column quantity_hard_reserved หรือ quantity_reserved ตาม Migration)
+            'quantity_reserved' => $stockLevel->getQuantityHardReserved(),
+            'quantity_hard_reserved' => $stockLevel->getQuantityHardReserved(),
+            'quantity_soft_reserved' => $stockLevel->getQuantitySoftReserved(),
         ];
     }
 
     public static function movementToPersistence(StockMovementAggregate $movement): StockMovementModel
     {
-        // ใช้ Reflection เพื่อเข้าถึง Private Properties ของ POPO (หรือใช้ Getter ถ้ามี)
+        // ใช้ Reflection เพื่อเข้าถึง Private Properties ของ POPO
         $reflection = new \ReflectionObject($movement);
 
         // Helper function to get property value

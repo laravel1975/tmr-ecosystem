@@ -12,7 +12,9 @@ interface StockPickingServiceInterface
      */
     public function planPicking(string $warehouseId, array $items): array;
 
+    /**
+     * @return \TmrEcosystem\Stock\Application\DTOs\StockPickingSuggestionDto[]
+     */
     public function suggestPickingLocations(string $productId, float $quantity, string $warehouseId): array;
-    // Returns array of DTOs like StockPickingSuggestionDto(locationId, quantity)
 
 }

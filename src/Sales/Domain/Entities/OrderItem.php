@@ -15,6 +15,12 @@ class OrderItem
         public int $qtyShipped = 0
     ) {}
 
+    // ✅ [Fix] เพิ่ม Method นี้เพื่อให้ PlaceOrderUseCase เรียกใช้ได้
+    public function getId(): ?string
+    {
+        return $this->id;
+    }
+
     public function total(): float
     {
         return $this->unitPrice * $this->quantity;

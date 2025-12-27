@@ -127,6 +127,9 @@ class PlaceOrderUseCase
             // 9. Save Aggregate
             $this->orderRepository->save($order);
 
+            // ✅ [เพิ่มบรรทัดนี้] Refresh ข้อมูลจาก DB เพื่อให้ได้ Item IDs ที่เพิ่งสร้างเสร็จ
+            $order = $this->orderRepository->findById($order->getId());
+
             // ✅ PREPARE SNAPSHOT DTO HERE (สร้างครั้งเดียวใช้ได้ทั้ง OrderCreated และ OrderConfirmed)
             $itemsSnapshot = $order->getItems()->map(fn($item) => new OrderItemSnapshotDto(
                 id: $item->getId(),
